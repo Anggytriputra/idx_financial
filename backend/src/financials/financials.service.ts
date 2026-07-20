@@ -21,10 +21,10 @@ export interface FinancialRatios {
 
 @Injectable()
 export class FinancialsService {
-  constructor(private readonly supabase: SupabaseService) {}
+  constructor(private readonly supabase: SupabaseService) { }
 
   private toSnakeCase(dto: CreateFinancialDto) {
-    return {
+    const raw = {
       company_id: dto.companyId,
       year: dto.year,
       quarter: dto.quarter ?? 4,
@@ -55,26 +55,42 @@ export class FinancialsService {
       notes: dto.notes,
       source_pdf_id: dto.sourcePdfId,
     };
+    return this.calculateDerivedFields(raw);
   }
 
   private calculateDerivedFields(row: any) {
     if (!row) return row;
-    
-    // EPS calculation (net_profit is in millions, shares_outstanding is in raw units)
+
+    // Normalize shares_outstanding if entered/extracted in Millions of shares (e.g., 4820 instead of 4820000000)
+    const rawShares = row.shares_outstanding ? Number(row.shares_outstanding) : null;
+    const effectiveShares =
+      rawShares && rawShares > 0 && rawShares < 100000
+        ? rawShares * 1000000
+        : rawShares;
+
+    // Normalize total_equity if extracted in Billions instead of Millions (e.g., total_equity < net_profit)
+    const rawEquity = row.total_equity ? Number(row.total_equity) : null;
+    const rawNetProfit = row.net_profit ? Number(row.net_profit) : null;
+    const effectiveEquity =
+      rawEquity && rawNetProfit && rawEquity > 0 && rawEquity < rawNetProfit
+        ? rawEquity * 1000
+        : rawEquity;
+
+    // EPS calculation (net_profit is in millions, effectiveShares is in raw units)
     const eps =
       row.eps !== null && row.eps !== undefined
         ? parseFloat(Number(row.eps).toFixed(4))
-        : row.net_profit && row.shares_outstanding
-        ? parseFloat(((row.net_profit * 1000000) / row.shares_outstanding).toFixed(4))
-        : null;
+        : row.net_profit && effectiveShares
+          ? parseFloat(((row.net_profit * 1000000) / effectiveShares).toFixed(4))
+          : null;
 
-    // BVPS calculation (total_equity is in millions, shares_outstanding is in raw units)
+    // BVPS calculation (effectiveEquity is in millions, effectiveShares is in raw units)
     const bvps =
-      row.bvps !== null && row.bvps !== undefined
-        ? parseFloat(Number(row.bvps).toFixed(4))
-        : row.total_equity && row.shares_outstanding
-        ? parseFloat(((row.total_equity * 1000000) / row.shares_outstanding).toFixed(4))
-        : null;
+      effectiveEquity && effectiveShares
+        ? parseFloat(((effectiveEquity * 1000000) / effectiveShares).toFixed(4))
+        : row.bvps !== null && row.bvps !== undefined
+          ? parseFloat(Number(row.bvps).toFixed(4))
+          : null;
 
     // Fair Value calculation using Graham Number: sqrt(22.5 * EPS * BVPS)
     let fair_value = row.fair_value;
@@ -88,18 +104,20 @@ export class FinancialsService {
       fair_value = parseFloat(Math.sqrt(22.5 * eps * bvps).toFixed(2));
     }
 
-    // Market Capitalization: shares_outstanding * market_price scaled to millions of Rupiah
+    // Market Capitalization: effectiveShares * market_price scaled to millions of Rupiah
     let market_cap = row.market_cap;
     if (
-      (market_cap === null || market_cap === undefined) &&
-      row.shares_outstanding &&
+      (market_cap === null || market_cap === undefined || market_cap < 1000) &&
+      effectiveShares &&
       row.market_price
     ) {
-      market_cap = Math.round((row.shares_outstanding * row.market_price) / 1000000);
+      market_cap = Math.round((effectiveShares * row.market_price) / 1000000);
     }
 
     return {
       ...row,
+      total_equity: effectiveEquity ?? row.total_equity,
+      shares_outstanding: effectiveShares ?? row.shares_outstanding,
       eps,
       bvps,
       fair_value,
@@ -109,7 +127,7 @@ export class FinancialsService {
 
   private computeRatios(row: any): FinancialRatios {
     const safe = (num: number, den: number, mult = 1): number | null => {
-      if (!den || den === 0) return null;
+      if (num === null || num === undefined || !den || den === 0) return null;
       return parseFloat(((num / den) * mult).toFixed(4));
     };
 

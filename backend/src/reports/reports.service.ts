@@ -2,19 +2,23 @@ import { Injectable, BadRequestException, NotFoundException } from '@nestjs/comm
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '../supabase/supabase.service';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleAIFileManager } from '@google/generative-ai/server';
 import { PDFParse } from 'pdf-parse';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class ReportsService {
   private gemini: GoogleGenerativeAI;
+  private fileManager: GoogleAIFileManager;
 
   constructor(
     private readonly supabase: SupabaseService,
     private readonly config: ConfigService,
   ) {
-    this.gemini = new GoogleGenerativeAI(
-      this.config.getOrThrow<string>('GEMINI_API_KEY'),
-    );
+    const apiKey = this.config.getOrThrow<string>('GEMINI_API_KEY');
+    this.gemini = new GoogleGenerativeAI(apiKey);
+    this.fileManager = new GoogleAIFileManager(apiKey);
   }
 
   async uploadAndExtract(
@@ -71,111 +75,101 @@ export class ReportsService {
 
     if (reportError) throw new Error(reportError.message);
 
-    // 4. Extract text from PDF
+    // 4. Extract data from PDF (Primary: Fast Smart Text Extraction - 12k tokens = 2s execution & zero rate limits)
     let extractedData: any = null;
     try {
-      const parser = new PDFParse({ data: new Uint8Array(file.buffer) });
-      const pdfData = await parser.getText();
-      
-      // Selectively extract pages containing financial keywords to fit in context windows & avoid rate limits
-      let pdfText = '';
-      const pages = pdfData.pages || [];
-      
-      const neracaPages: any[] = [];
-      const labaRugiPages: any[] = [];
-      const sahamPages: any[] = [];
-
-      for (const page of pages) {
-        const textLower = page.text.toLowerCase();
+      try {
+        console.log('[PDF Extraction] Extracting key financial statement pages (Fast 12k token mode)...');
+        const parser = new PDFParse({ data: new Uint8Array(file.buffer) });
+        const pdfData = await parser.getText();
         
-        const isNeraca = 
-          textLower.includes('total aset') || 
-          textLower.includes('total assets') || 
-          textLower.includes('posisi keuangan') || 
-          textLower.includes('neraca') ||
-          textLower.includes('skala usaha') ||
-          textLower.includes('total liabilitas') ||
-          textLower.includes('total liabilities') ||
-          textLower.includes('total ekuitas') ||
-          textLower.includes('total equity');
+        let pdfText = '';
+        const pages = pdfData.pages || [];
+        
+        const neracaPages: any[] = [];
+        const labaRugiPages: any[] = [];
+        const arusKasPages: any[] = [];
+        const sahamPages: any[] = [];
+
+        for (const page of pages) {
+          const textLower = page.text.toLowerCase();
           
-        const isLabaRugi = 
-          textLower.includes('laba bersih') || 
-          textLower.includes('net profit') || 
-          textLower.includes('net income') || 
-          textLower.includes('laba rugi') ||
-          textLower.includes('laba usaha') ||
-          textLower.includes('laba kotor') ||
-          textLower.includes('laba bruto');
+          const isNeraca = 
+            textLower.includes('total aset') || 
+            textLower.includes('total assets') || 
+            textLower.includes('posisi keuangan') || 
+            textLower.includes('neraca') ||
+            textLower.includes('skala usaha') ||
+            textLower.includes('total liabilitas') ||
+            textLower.includes('total liabilities') ||
+            textLower.includes('total ekuitas') ||
+            textLower.includes('total equity');
+            
+          const isLabaRugi = 
+            textLower.includes('laba bersih') || 
+            textLower.includes('net profit') || 
+            textLower.includes('net income') || 
+            textLower.includes('laba rugi') ||
+            textLower.includes('laba usaha') ||
+            textLower.includes('laba kotor') ||
+            textLower.includes('laba bruto');
 
-        const isSaham = 
-          textLower.includes('saham beredar') ||
-          textLower.includes('outstanding shares') ||
-          textLower.includes('harga saham') ||
-          textLower.includes('share price') ||
-          textLower.includes('kapitalisasi pasar') ||
-          textLower.includes('market capitalization');
-          
-        if (isNeraca) neracaPages.push(page);
-        if (isLabaRugi) labaRugiPages.push(page);
-        if (isSaham) sahamPages.push(page);
-      }
+          const isArusKas =
+            textLower.includes('arus kas') ||
+            textLower.includes('cash flow') ||
+            textLower.includes('aktivitas operasi') ||
+            textLower.includes('operating activities');
 
-      // Proportional selection to guarantee representation of all three categories within rate limits (total max 6-8 pages)
-      const selectedPages: any[] = [];
-      
-      // Take the top 2 neraca pages (usually first 2 are the consolidated sheets)
-      selectedPages.push(...neracaPages.slice(0, 2));
-      
-      // Take the top 2 laba rugi pages
-      selectedPages.push(...labaRugiPages.slice(0, 2));
-      
-      // Take the top 2 saham pages (this ensures page 19/25 containing share info is captured!)
-      selectedPages.push(...sahamPages.slice(0, 2));
-
-      // Remove duplicates & sort by page number
-      const uniqueSelected = Array.from(
-        new Map(selectedPages.map(p => [p.num, p])).values()
-      ).sort((a, b) => a.num - b.num);
-
-      pdfText = uniqueSelected.map(p => `--- HALAMAN ${p.num} ---\n${p.text}\n\n`).join('');
-      const finalMatchedNums = uniqueSelected.map(p => p.num);
-
-      console.log(`[PDF Extraction] Categorized selection complete. Selected ${finalMatchedNums.length} pages: ${finalMatchedNums.join(', ')}`);
-
-      // Fallback to first 40,000 characters if no page matched keywords
-      if (pdfText.trim() === '') {
-        console.log('[PDF Extraction] No pages matched. Falling back to first 40,000 characters.');
-        pdfText = pdfData.text.slice(0, 40000);
-      }
-
-      // 5. Use Groq AI (if key is set) or Gemini AI to extract financial data
-      const groqApiKey = this.config.get<string>('GROQ_API_KEY');
-      if (groqApiKey && groqApiKey !== 'your-groq-api-key' && groqApiKey.trim() !== '') {
-        try {
-          console.log('[PDF Extraction] Attempting extraction with Groq...');
-          extractedData = await this.extractWithGroq(
-            pdfText,
-            company.name,
-            company.ticker,
-            year,
-            quarter,
-            groqApiKey,
-          );
-        } catch (groqErr) {
-          console.warn(`[PDF Extraction] Groq extraction failed: ${groqErr.message || groqErr}. Falling back to Gemini 2.0 Flash...`);
-          extractedData = await this.extractWithGemini(
-            pdfText,
-            company.name,
-            company.ticker,
-            year,
-            quarter,
-          );
+          const isSaham = 
+            textLower.includes('saham beredar') ||
+            textLower.includes('outstanding shares') ||
+            textLower.includes('harga saham') ||
+            textLower.includes('share price') ||
+            textLower.includes('kapitalisasi pasar') ||
+            textLower.includes('market capitalization') ||
+            textLower.includes('harga penutupan');
+            
+          if (isNeraca) neracaPages.push(page);
+          if (isLabaRugi) labaRugiPages.push(page);
+          if (isArusKas) arusKasPages.push(page);
+          if (isSaham) sahamPages.push(page);
         }
-      } else {
-        console.log('[PDF Extraction] No Groq API Key found. Using Gemini...');
-        extractedData = await this.extractWithGemini(
-          pdfText,
+
+        const selectedPages: any[] = [];
+        selectedPages.push(...pages.slice(0, 3));
+        selectedPages.push(...neracaPages.slice(0, 8));
+        selectedPages.push(...labaRugiPages.slice(0, 8));
+        selectedPages.push(...arusKasPages.slice(0, 6));
+        selectedPages.push(...sahamPages.slice(0, 6));
+
+        const uniqueSelected = Array.from(
+          new Map(selectedPages.map(p => [p.num, p])).values()
+        ).sort((a, b) => a.num - b.num);
+
+        pdfText = uniqueSelected.map(p => `--- HALAMAN ${p.num} ---\n${p.text}\n\n`).join('');
+
+        if (pdfText.trim() === '') {
+          pdfText = pdfData.text.slice(0, 40000);
+        }
+
+        const groqApiKey = this.config.get<string>('GROQ_API_KEY');
+        if (groqApiKey && groqApiKey !== 'your-groq-api-key' && groqApiKey.trim() !== '') {
+          try {
+            console.log('[PDF Extraction] Extracting via Groq API...');
+            extractedData = await this.extractWithGroq(pdfText, company.name, company.ticker, year, quarter, groqApiKey);
+          } catch (groqErr) {
+            console.log('[PDF Extraction] Groq fallback to Gemini text mode...');
+            extractedData = await this.extractWithGemini(pdfText, company.name, company.ticker, year, quarter);
+          }
+        } else {
+          console.log('[PDF Extraction] Extracting via Gemini 2.0 Flash text mode...');
+          extractedData = await this.extractWithGemini(pdfText, company.name, company.ticker, year, quarter);
+        }
+        console.log('[PDF Extraction] Fast text extraction complete & successful!');
+      } catch (textErr: any) {
+        console.warn(`[PDF Extraction] Text extraction failed: ${textErr.message || textErr}. Attempting Native PDF Upload fallback...`);
+        extractedData = await this.extractWithGeminiNativePDF(
+          file.buffer,
           company.name,
           company.ticker,
           year,
@@ -193,18 +187,23 @@ export class ReportsService {
           updated_at: new Date().toISOString(),
         })
         .eq('id', report.id);
-    } catch (err) {
+    } catch (err: any) {
+      const isQuotaError = err.message?.includes('429') || err.message?.includes('quota') || err.message?.includes('Quota exceeded');
+      const userErrMsg = isQuotaError
+        ? 'Kuota gratis Google Gemini API sedang mencapai batas per menit (Rate Limit 429). Silakan tunggu 1 menit lalu coba upload kembali.'
+        : `Ekstraksi PDF gagal: ${err.message}`;
+
       await this.supabase
         .getClient()
         .from('pdf_reports')
         .update({
           status: 'error',
-          error_message: err.message,
+          error_message: userErrMsg,
           updated_at: new Date().toISOString(),
         })
         .eq('id', report.id);
 
-      throw new BadRequestException(`Ekstraksi PDF gagal: ${err.message}`);
+      throw new BadRequestException(userErrMsg);
     }
 
     return {
@@ -236,7 +235,19 @@ Teks laporan keuangan:
 ${pdfText}
 ---
 
-PENTING: Ekstrak data keuangan dalam format JSON berikut. Semua nilai keuangan WAJIB dalam satuan JUTAAN RUPIAH (nilai riil dibagi 1.000.000). Jika laporan keuangan asli menggunakan satuan MILIAR RUPIAH (miliar) (contoh: Aset tertulis 19.570 atau 19.570.000.000), Anda WAJIB mengalikannya dengan 1.000 terlebih dahulu (menjadi 19.570.000) sebelum ditulis ke JSON agar satuannya konsisten dalam JUTAAN RUPIAH. Jika data tidak tersedia, gunakan null.
+PENTING: Ekstrak data keuangan dalam format JSON berikut. SEMUA NILAI KEUANGAN WAJIB DALAM SATUAN JUTAAN RUPIAH (nilai riil dibagi 1.000.000).
+
+PERHATIKAN SATUAN PELAPORAN PADA HEADER/JUDUL:
+1. Jika laporan tertulis "disajikan dalam MILIAR RUPIAH" / "in BILLIONS of Rupiah":
+   - Contoh: Total Ekuitas tertulis 13.052 (miliar), maka Anda WAJIB mengalikan 1.000 menjadi 13052000 (Jutaan Rupiah).
+   - Contoh: Total Aset tertulis 19.570 (miliar), maka Anda WAJIB mengalikan 1.000 menjadi 19570000 (Jutaan Rupiah).
+2. Jika laporan tertulis "disajikan dalam JUTAAN RUPIAH" / "in MILLIONS of Rupiah":
+   - Tulis angka apa adanya (contoh: 13052000).
+3. Jika laporan tertulis "disajikan dalam RIBUAN RUPIAH" / "in THOUSANDS of Rupiah":
+   - Bagi angka dengan 1.000.
+4. PASTIKAN SKALA ASET, LIABILITAS, EKUITAS, DAN LABA BERSIH SANGAT KONSISTEN! Ekuitas perusahaan publik tidak boleh lebih kecil dari Laba Bersih tahunan jika perusahaan laba (ROE normal).
+
+KHUSUS UNTUK Saham Beredar (sharesOutstanding): Nilainya WAJIB ditulis dalam SATUAN LEMBAR UTUH (contoh: 4820000000 lembar, BUKAN 4820 atau disingkat juta/ribu lembar). Jika di laporan tertulis 4.820 juta lembar, Anda WAJIB mengalikannya dengan 1.000.000 menjadi 4820000000. Jika data tidak tersedia, gunakan null.
 
 Kembalikan HANYA JSON tanpa markdown:
 {
@@ -273,25 +284,49 @@ Kembalikan HANYA JSON tanpa markdown:
 }
 `;
 
-    let result: any;
-    let retries = 5;
-    let delayMs = 10000;
-    while (retries > 0) {
+    const modelsToTry = ['gemini-2.0-flash'];
+    let result: any = null;
+    let lastErr: any = null;
+
+    for (const modelName of modelsToTry) {
       try {
-        result = await model.generateContent(prompt);
-        break; // success
-      } catch (err: any) {
-        retries--;
-        const isRateLimit = err.message?.includes('429') || err.message?.includes('quota');
-        if (isRateLimit && retries > 0) {
-          console.warn(`Gemini rate limited (429). Retrying in ${delayMs / 1000}s...`);
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-          delayMs = Math.min(delayMs * 2, 30000);
-        } else {
-          throw err;
+        console.log(`[PDF Extraction] Attempting text extraction with Gemini model: ${modelName}...`);
+        const model = this.gemini.getGenerativeModel({ model: modelName });
+
+        let retries = 3;
+        while (retries > 0) {
+          try {
+            result = await model.generateContent(prompt);
+            break; // success
+          } catch (err: any) {
+            retries--;
+            const isRateLimit = err.message?.includes('429') || err.message?.includes('quota');
+            if (isRateLimit && retries > 0) {
+              let waitMs = 20000;
+              const match = err.message?.match(/retry in ([0-9.]+)s/i) || err.message?.match(/retryDelay":\s*"([0-9.]+)s"/i);
+              if (match && match[1]) {
+                waitMs = Math.ceil(parseFloat(match[1]) * 1000) + 2000;
+              }
+              console.warn(`[PDF Extraction] Gemini text mode (${modelName}) rate limited (429). Waiting ${waitMs / 1000}s automatically in background...`);
+              await new Promise((resolve) => setTimeout(resolve, waitMs));
+            } else {
+              throw err;
+            }
+          }
         }
+
+        if (result) {
+          console.log(`[PDF Extraction] Text extraction succeeded with model: ${modelName}`);
+          break;
+        }
+      } catch (mErr: any) {
+        lastErr = mErr;
+        console.warn(`Model ${modelName} failed or rate limited: ${mErr.message}. Trying fallback model...`);
       }
     }
+
+    if (!result) throw lastErr || new Error('Semua model Gemini sedang mencapai kuota rate limit. Silakan coba 15 detik lagi.');
+
     const text = result.response.text();
 
     // Clean and parse JSON
@@ -321,7 +356,19 @@ Teks laporan keuangan:
 ${pdfText}
 ---
 
-PENTING: Ekstrak data keuangan dalam format JSON berikut. Semua nilai keuangan WAJIB dalam satuan JUTAAN RUPIAH (nilai riil dibagi 1.000.000). Jika laporan keuangan asli menggunakan satuan MILIAR RUPIAH (miliar) (contoh: Aset tertulis 19.570 atau 19.570.000.000), Anda WAJIB mengalikannya dengan 1.000 terlebih dahulu (menjadi 19.570.000) sebelum ditulis ke JSON agar satuannya konsisten dalam JUTAAN RUPIAH. Jika data tidak tersedia, gunakan null.
+PENTING: Ekstrak data keuangan dalam format JSON berikut. SEMUA NILAI KEUANGAN WAJIB DALAM SATUAN JUTAAN RUPIAH (nilai riil dibagi 1.000.000).
+
+PERHATIKAN SATUAN PELAPORAN PADA HEADER/JUDUL:
+1. Jika laporan tertulis "disajikan dalam MILIAR RUPIAH" / "in BILLIONS of Rupiah":
+   - Contoh: Total Ekuitas tertulis 13.052 (miliar), maka Anda WAJIB mengalikan 1.000 menjadi 13052000 (Jutaan Rupiah).
+   - Contoh: Total Aset tertulis 19.570 (miliar), maka Anda WAJIB mengalikan 1.000 menjadi 19570000 (Jutaan Rupiah).
+2. Jika laporan tertulis "disajikan dalam JUTAAN RUPIAH" / "in MILLIONS of Rupiah":
+   - Tulis angka apa adanya (contoh: 13052000).
+3. Jika laporan tertulis "disajikan dalam RIBUAN RUPIAH" / "in THOUSANDS of Rupiah":
+   - Bagi angka dengan 1.000.
+4. PASTIKAN SKALA ASET, LIABILITAS, EKUITAS, DAN LABA BERSIH SANGAT KONSISTEN! Ekuitas perusahaan publik tidak boleh lebih kecil dari Laba Bersih tahunan jika perusahaan laba (ROE normal).
+
+KHUSUS UNTUK Saham Beredar (sharesOutstanding): Nilainya WAJIB ditulis dalam SATUAN LEMBAR UTUH (contoh: 4820000000 lembar, BUKAN 4820 atau disingkat juta/ribu lembar). Jika di laporan tertulis 4.820 juta lembar, Anda WAJIB mengalikannya dengan 1.000.000 menjadi 4820000000. Jika data tidak tersedia, gunakan null.
 
 Kembalikan HANYA JSON:
 {
@@ -438,6 +485,31 @@ Kembalikan HANYA JSON:
       source_pdf_id: reportId,
     };
 
+    const totalEquity = this.parseBigInt(extractedData.totalEquity);
+    const netProfit = this.parseBigInt(extractedData.netProfit);
+    const sharesOutstanding = this.parseBigInt(extractedData.sharesOutstanding);
+    const marketPrice = this.parseDecimal(extractedData.marketPrice);
+
+    let eps = this.parseDecimal(extractedData.eps);
+    if ((eps === null || eps === undefined) && netProfit && sharesOutstanding) {
+      eps = parseFloat(((netProfit * 1000000) / sharesOutstanding).toFixed(4));
+    }
+
+    let bvps = this.parseDecimal(extractedData.bvps);
+    if ((bvps === null || bvps === undefined) && totalEquity && sharesOutstanding) {
+      bvps = parseFloat(((totalEquity * 1000000) / sharesOutstanding).toFixed(4));
+    }
+
+    let fairValue: number | null = null;
+    if (eps && bvps && eps > 0 && bvps > 0) {
+      fairValue = parseFloat(Math.sqrt(22.5 * eps * bvps).toFixed(2));
+    }
+
+    let marketCap: number | null = null;
+    if (sharesOutstanding && marketPrice) {
+      marketCap = Math.round((sharesOutstanding * marketPrice) / 1000000);
+    }
+
     // Convert camelCase to snake_case for DB with proper number sanitization/casting
     const dbPayload = {
       company_id: report.company_id,
@@ -449,7 +521,7 @@ Kembalikan HANYA JSON:
       total_liabilities: this.parseBigInt(extractedData.totalLiabilities),
       current_liabilities: this.parseBigInt(extractedData.currentLiabilities),
       long_term_liabilities: this.parseBigInt(extractedData.longTermLiabilities),
-      total_equity: this.parseBigInt(extractedData.totalEquity),
+      total_equity: totalEquity,
       working_capital: this.parseBigInt(extractedData.workingCapital),
       revenue: this.parseBigInt(extractedData.revenue),
       cost_of_goods_sold: this.parseBigInt(extractedData.costOfGoodsSold),
@@ -457,14 +529,16 @@ Kembalikan HANYA JSON:
       operating_expenses: this.parseBigInt(extractedData.operatingExpenses),
       operating_profit: this.parseBigInt(extractedData.operatingProfit),
       ebitda: this.parseBigInt(extractedData.ebitda),
-      net_profit: this.parseBigInt(extractedData.netProfit),
+      net_profit: netProfit,
       operating_cash_flow: this.parseBigInt(extractedData.operatingCashFlow),
       investing_cash_flow: this.parseBigInt(extractedData.investingCashFlow),
       financing_cash_flow: this.parseBigInt(extractedData.financingCashFlow),
-      shares_outstanding: this.parseBigInt(extractedData.sharesOutstanding),
-      eps: this.parseDecimal(extractedData.eps),
-      bvps: this.parseDecimal(extractedData.bvps),
-      market_price: this.parseDecimal(extractedData.marketPrice),
+      shares_outstanding: sharesOutstanding,
+      eps,
+      bvps,
+      market_price: marketPrice,
+      fair_value: fairValue,
+      market_cap: marketCap,
       source_pdf_id: reportId,
     };
 
@@ -575,5 +649,148 @@ Kembalikan HANYA JSON:
 
     if (error) throw new Error(error.message);
     return data;
+  }
+
+  private async extractWithGeminiNativePDF(
+    fileBuffer: Buffer,
+    companyName: string,
+    ticker: string,
+    year: number,
+    quarter: number,
+  ) {
+    const tempDir = path.join(process.cwd(), 'tmp');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    const tempFilePath = path.join(tempDir, `report_${Date.now()}_${Math.random().toString(36).substring(7)}.pdf`);
+    fs.writeFileSync(tempFilePath, fileBuffer);
+
+    let uploadResult: any = null;
+    try {
+      console.log(`[PDF Extraction] Uploading entire PDF to Gemini File API for full 350+ page native scanning...`);
+      uploadResult = await this.fileManager.uploadFile(tempFilePath, {
+        mimeType: 'application/pdf',
+        displayName: `${ticker}_${year}_Q${quarter}.pdf`,
+      });
+
+      console.log(`[PDF Extraction] Native PDF upload complete: ${uploadResult.file.uri}. Extracting with Gemini 2.0 Flash...`);
+
+      const model = this.gemini.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+      const prompt = `
+Kamu adalah ahli analisis laporan keuangan Indonesia. Ekstrak data keuangan dari SELURUH DOKUMEN PDF laporan keuangan berikut secara LENGKAP, AKURAT, dan PRESISI dari halaman berapa pun (termasuk halaman 1 hingga halaman 350+).
+
+Perusahaan: ${companyName} (${ticker})
+Tahun: ${year}
+Kuartal: Q${quarter}
+
+PENTING ATURAN SATUAN PELAPORAN:
+1. SEMUA NILAI KEUANGAN WAJIB DALAM SATUAN JUTAAN RUPIAH (nilai riil dibagi 1.000.000).
+2. PERHATIKAN JUDUL/HEADER PELAPORAN DENGAN SANGAT TELITI:
+   - Jika tertulis "disajikan dalam MILIAR RUPIAH" / "in BILLIONS of Rupiah" (contoh: Total Ekuitas 13.052), Anda WAJIB mengalikan 1.000 terlebih dahulu menjadi 13052000 (Jutaan Rupiah).
+   - Jika tertulis "disajikan dalam JUTAAN RUPIAH" / "in MILLIONS of Rupiah", tulis angka apa adanya.
+   - Jika tertulis "disajikan dalam RIBUAN RUPIAH" / "in THOUSANDS of Rupiah", bagi angka dengan 1.000.
+3. KHUSUS UNTUK Saham Beredar (sharesOutstanding): WAJIB DALAM SATUAN LEMBAR UTUH (contoh: 4820000000 lembar utuh, BUKAN 4820 atau disingkat juta/ribu lembar). Jika tertulis 4.820 juta lembar, kalikan 1.000.000 menjadi 4820000000.
+4. PERIKSA SELURUH HALAMAN (termasuk Catatan atas Laporan Keuangan di halaman berapa pun). Jika ada Informasi Saham / Harga Penutupan Saham (marketPrice), masukkan angkanya. Jika tidak ada, gunakan null.
+
+Kembalikan HANYA JSON tanpa markdown:
+{
+  "companyId": null,
+  "year": ${year},
+  "quarter": ${quarter},
+  "totalAssets": null,
+  "currentAssets": null,
+  "nonCurrentAssets": null,
+  "totalLiabilities": null,
+  "currentLiabilities": null,
+  "longTermLiabilities": null,
+  "totalEquity": null,
+  "workingCapital": null,
+  "revenue": null,
+  "costOfGoodsSold": null,
+  "grossProfit": null,
+  "operatingExpenses": null,
+  "operatingProfit": null,
+  "ebitda": null,
+  "netProfit": null,
+  "operatingCashFlow": null,
+  "investingCashFlow": null,
+  "financingCashFlow": null,
+  "sharesOutstanding": null,
+  "eps": null,
+  "bvps": null,
+  "marketPrice": null,
+  "fairValue": null,
+  "currency": "IDR",
+  "unit": "jutaan",
+  "confidence": 0.0,
+  "notes": "catatan jika ada"
+}
+`;
+
+      const modelsToTry = ['gemini-2.0-flash'];
+      let result: any = null;
+      let lastErr: any = null;
+
+      for (const modelName of modelsToTry) {
+        try {
+          console.log(`[PDF Extraction] Attempting native PDF extraction with model: ${modelName}...`);
+          const model = this.gemini.getGenerativeModel({ model: modelName });
+
+          let retries = 3;
+          while (retries > 0) {
+            try {
+              result = await model.generateContent([
+                {
+                  fileData: {
+                    mimeType: uploadResult.file.mimeType,
+                    fileUri: uploadResult.file.uri,
+                  },
+                },
+                { text: prompt },
+              ]);
+              break; // Success!
+            } catch (err: any) {
+              retries--;
+              const isRateLimit = err.message?.includes('429') || err.message?.includes('quota');
+              if (isRateLimit && retries > 0) {
+                let waitMs = 20000;
+                const match = err.message?.match(/retry in ([0-9.]+)s/i) || err.message?.match(/retryDelay":\s*"([0-9.]+)s"/i);
+                if (match && match[1]) {
+                  waitMs = Math.ceil(parseFloat(match[1]) * 1000) + 2000;
+                }
+                console.warn(`[PDF Extraction] Gemini (${modelName}) rate limited (429). Waiting ${waitMs / 1000}s automatically in background...`);
+                await new Promise((resolve) => setTimeout(resolve, waitMs));
+              } else {
+                throw err;
+              }
+            }
+          }
+
+          if (result) {
+            console.log(`[PDF Extraction] Native PDF extraction succeeded with model: ${modelName}`);
+            break;
+          }
+        } catch (mErr: any) {
+          lastErr = mErr;
+          console.warn(`Model ${modelName} failed or rate limited: ${mErr.message}. Trying fallback model...`);
+        }
+      }
+
+      if (!result) throw lastErr || new Error('Semua model Gemini sedang mencapai kuota rate limit. Silakan coba 15 detik lagi.');
+
+      const text = result.response.text();
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('AI tidak berhasil mengekstrak data keuangan dari PDF');
+
+      return JSON.parse(jsonMatch[0]);
+    } finally {
+      if (fs.existsSync(tempFilePath)) {
+        try { fs.unlinkSync(tempFilePath); } catch (e) {}
+      }
+      if (uploadResult && uploadResult.file?.name) {
+        try { await this.fileManager.deleteFile(uploadResult.file.name); } catch (e) {}
+      }
+    }
   }
 }
