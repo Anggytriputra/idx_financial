@@ -144,15 +144,28 @@ export class ReportsService {
         }
 
         const groqApiKey = this.config.get<string>('GROQ_API_KEY');
-        if (!groqApiKey || groqApiKey === 'your-groq-api-key' || groqApiKey.trim() === '') {
-          throw new Error('GROQ_API_KEY tidak ditemukan di file .env Anda. Pastikan API Key Groq sudah terpasang.');
-        }
+        const geminiApiKey = this.config.get<string>('GEMINI_API_KEY');
 
-        console.log('[PDF Extraction] Extracting via Groq API...');
-        extractedData = await this.extractWithGroq(pdfText, company.name, company.ticker, year, quarter, groqApiKey);
-        console.log('[PDF Extraction] Groq extraction complete & successful!');
+        try {
+          if (!groqApiKey || groqApiKey === 'your-groq-api-key' || groqApiKey.trim() === '') {
+            throw new Error('GROQ_API_KEY tidak ditemukan.');
+          }
+          console.log('[PDF Extraction] Extracting via Groq API...');
+          extractedData = await this.extractWithGroq(pdfText, company.name, company.ticker, year, quarter, groqApiKey);
+          console.log('[PDF Extraction] Groq extraction complete & successful!');
+        } catch (groqErr: any) {
+          console.warn(`[PDF Extraction] Groq failed: ${groqErr.message || groqErr}. Falling back to Google Gemini...`);
+          
+          if (!geminiApiKey || geminiApiKey === 'your-gemini-api-key' || geminiApiKey.trim() === '') {
+            throw new Error(`Groq gagal (${groqErr.message}) dan GEMINI_API_KEY tidak dikonfigurasi di file .env.`);
+          }
+
+          console.log('[PDF Extraction] Extracting via Google Gemini API (gemini-2.0-flash)...');
+          extractedData = await this.extractWithGemini(pdfText, company.name, company.ticker, year, quarter, geminiApiKey);
+          console.log('[PDF Extraction] Gemini extraction complete & successful!');
+        }
       } catch (textErr: any) {
-        console.error(`[PDF Extraction] Groq extraction failed: ${textErr.message || textErr}`);
+        console.error(`[PDF Extraction] Fallback pipeline failed: ${textErr.message || textErr}`);
         throw textErr;
       }
 
@@ -167,9 +180,9 @@ export class ReportsService {
         })
         .eq('id', report.id);
     } catch (err: any) {
-      const isQuotaError = err.message?.includes('429') || err.message?.includes('quota') || err.message?.includes('Quota exceeded');
+      const isQuotaError = err.message?.includes('429') || err.message?.includes('quota') || err.message?.includes('Quota exceeded') || err.message?.includes('rate_limit_exceeded');
       const userErrMsg = isQuotaError
-        ? 'Kuota gratis Google Gemini API sedang mencapai batas per menit (Rate Limit 429). Silakan tunggu 1 menit lalu coba upload kembali.'
+        ? 'Batas kuota gratis AI (Groq/Gemini) terlampaui. Silakan tunggu 1 menit lalu coba upload kembali.'
         : `Ekstraksi PDF gagal: ${err.message}`;
 
       await this.supabase
@@ -330,6 +343,92 @@ Kembalikan HANYA JSON:
     }
     
     throw lastError || new Error('All Groq models failed');
+  }
+
+  private async extractWithGemini(
+    pdfText: string,
+    companyName: string,
+    ticker: string,
+    year: number,
+    quarter: number,
+    apiKey: string,
+  ) {
+    const { GoogleGenerativeAI } = require('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash',
+      generationConfig: {
+        responseMimeType: 'application/json',
+      },
+    });
+
+    const prompt = `
+Kamu adalah ahli analisis laporan keuangan Indonesia. Ekstrak data keuangan dari laporan tahunan perusahaan berikut.
+
+Perusahaan: ${companyName} (${ticker})
+Tahun: ${year}
+Kuartal: Q${quarter}
+
+Teks laporan keuangan:
+---
+${pdfText}
+---
+
+PENTING: Ekstrak data keuangan dalam format JSON berikut. SEMUA NILAI KEUANGAN WAJIB DALAM SATUAN JUTAAN RUPIAH (nilai riil dibagi 1.000.000).
+
+PERHATIKAN SATUAN PELAPORAN PADA HEADER/JUDUL:
+1. Jika laporan tertulis "disajikan dalam MILIAR RUPIAH" / "in BILLIONS of Rupiah":
+   - Contoh: Total Ekuitas tertulis 13.052 (miliar), maka Anda WAJIB mengalikan 1.000 menjadi 13052000 (Jutaan Rupiah).
+   - Contoh: Total Aset tertulis 19.570 (miliar), maka Anda WAJIB mengalikan 1.000 menjadi 19570000 (Jutaan Rupiah).
+2. Jika laporan tertulis "disajikan dalam JUTAAN RUPIAH" / "in MILLIONS of Rupiah":
+   - Tulis angka apa adanya (contoh: 13052000).
+3. Jika laporan tertulis "disajikan dalam RIBUAN RUPIAH" / "in THOUSANDS of Rupiah":
+   - Bagi angka dengan 1.000.
+4. PASTIKAN SKALA ASET, LIABILITAS, EKUITAS, DAN LABA BERSIH SANGAT KONSISTEN! Ekuitas perusahaan publik tidak boleh lebih kecil dari Laba Bersih tahunan jika perusahaan laba (ROE normal).
+
+KHUSUS UNTUK Saham Beredar (sharesOutstanding): Nilainya WAJIB ditulis dalam SATUAN LEMBAR UTUH (contoh: 4820000000 lembar, BUKAN 4820 atau disingkat juta/ribu lembar). Jika di laporan tertulis 4.820 juta lembar, Anda WAJIB mengalikannya dengan 1.000.000 menjadi 4820000000. Jika data tidak tersedia, gunakan null.
+
+Kembalikan HANYA JSON:
+{
+  "companyId": null,
+  "year": ${year},
+  "quarter": ${quarter},
+  "totalAssets": null,
+  "currentAssets": null,
+  "nonCurrentAssets": null,
+  "totalLiabilities": null,
+  "currentLiabilities": null,
+  "longTermLiabilities": null,
+  "totalEquity": null,
+  "workingCapital": null,
+  "revenue": null,
+  "costOfGoodsSold": null,
+  "grossProfit": null,
+  "operatingExpenses": null,
+  "operatingProfit": null,
+  "ebitda": null,
+  "netProfit": null,
+  "operatingCashFlow": null,
+  "investingCashFlow": null,
+  "financingCashFlow": null,
+  "sharesOutstanding": null,
+  "eps": null,
+  "bvps": null,
+  "marketPrice": null,
+  "fairValue": null,
+  "dividend": null,
+  "currency": "IDR",
+  "unit": "jutaan",
+  "confidence": 0.0,
+  "notes": "catatan jika ada"
+}
+`;
+
+    const result = await model.generateContent(prompt);
+    const responseText = result.response.text();
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('AI (Gemini) tidak berhasil mengekstrak data keuangan');
+    return JSON.parse(jsonMatch[0].trim());
   }
 
   async confirmExtraction(reportId: string, userId: string, customExtractedData?: any) {
