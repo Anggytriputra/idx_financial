@@ -356,7 +356,7 @@ Kembalikan HANYA JSON:
     const { GoogleGenerativeAI } = require('@google/generative-ai');
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-flash-latest',
       generationConfig: {
         responseMimeType: 'application/json',
       },
@@ -424,11 +424,36 @@ Kembalikan HANYA JSON:
 }
 `;
 
-    const result = await model.generateContent(prompt);
-    const responseText = result.response.text();
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('AI (Gemini) tidak berhasil mengekstrak data keuangan');
-    return JSON.parse(jsonMatch[0].trim());
+    let retries = 3;
+    let lastError: Error | null = null;
+
+    while (retries > 0) {
+      try {
+        const result = await model.generateContent(prompt);
+        const responseText = result.response.text();
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) throw new Error('AI (Gemini) tidak berhasil mengekstrak data keuangan');
+        return JSON.parse(jsonMatch[0].trim());
+      } catch (err: any) {
+        retries--;
+        const isRateLimit = err.message?.includes('429') || err.message?.toLowerCase().includes('rate limit') || err.message?.toLowerCase().includes('quota') || err.message?.toLowerCase().includes('resource_exhausted');
+        if (isRateLimit && retries > 0) {
+          let waitSeconds = 10;
+          const match = err.message?.match(/retry in ([0-9.]+)s/i) || err.message?.match(/please retry in ([0-9.]+)s/i) || err.message?.match(/retryDelay\"?\s*:\s*\"?([0-9.]+)/i);
+          if (match && match[1]) {
+            waitSeconds = Math.ceil(parseFloat(match[1])) + 2;
+          }
+          console.warn(`[Gemini Extraction] Rate limited (429). Waiting ${waitSeconds}s automatically in background...`);
+          await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
+        } else {
+          console.warn(`[Gemini Extraction] Failed: ${err.message || err}`);
+          lastError = err;
+          break;
+        }
+      }
+    }
+
+    throw lastError || new Error('Gemini extraction failed after retries');
   }
 
   async confirmExtraction(reportId: string, userId: string, customExtractedData?: any) {
