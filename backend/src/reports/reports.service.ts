@@ -1,25 +1,16 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '../supabase/supabase.service';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { GoogleAIFileManager } from '@google/generative-ai/server';
 import { PDFParse } from 'pdf-parse';
 import * as fs from 'fs';
 import * as path from 'path';
 
 @Injectable()
 export class ReportsService {
-  private gemini: GoogleGenerativeAI;
-  private fileManager: GoogleAIFileManager;
-
   constructor(
     private readonly supabase: SupabaseService,
     private readonly config: ConfigService,
-  ) {
-    const apiKey = this.config.getOrThrow<string>('GEMINI_API_KEY');
-    this.gemini = new GoogleGenerativeAI(apiKey);
-    this.fileManager = new GoogleAIFileManager(apiKey);
-  }
+  ) {}
 
   async uploadAndExtract(
     userId: string,
@@ -79,7 +70,7 @@ export class ReportsService {
     let extractedData: any = null;
     try {
       try {
-        console.log('[PDF Extraction] Extracting key financial statement pages (Fast 12k token mode)...');
+        console.log('[PDF Extraction] Extracting key financial statement pages (Groq-Only Mode)...');
         const parser = new PDFParse({ data: new Uint8Array(file.buffer) });
         const pdfData = await parser.getText();
         
@@ -137,10 +128,10 @@ export class ReportsService {
 
         const selectedPages: any[] = [];
         selectedPages.push(...pages.slice(0, 3));
-        selectedPages.push(...neracaPages.slice(0, 8));
-        selectedPages.push(...labaRugiPages.slice(0, 8));
-        selectedPages.push(...arusKasPages.slice(0, 6));
-        selectedPages.push(...sahamPages.slice(0, 6));
+        selectedPages.push(...neracaPages.slice(0, 3));
+        selectedPages.push(...labaRugiPages.slice(0, 3));
+        selectedPages.push(...arusKasPages.slice(0, 3));
+        selectedPages.push(...sahamPages.slice(0, 3));
 
         const uniqueSelected = Array.from(
           new Map(selectedPages.map(p => [p.num, p])).values()
@@ -153,28 +144,16 @@ export class ReportsService {
         }
 
         const groqApiKey = this.config.get<string>('GROQ_API_KEY');
-        if (groqApiKey && groqApiKey !== 'your-groq-api-key' && groqApiKey.trim() !== '') {
-          try {
-            console.log('[PDF Extraction] Extracting via Groq API...');
-            extractedData = await this.extractWithGroq(pdfText, company.name, company.ticker, year, quarter, groqApiKey);
-          } catch (groqErr) {
-            console.log('[PDF Extraction] Groq fallback to Gemini text mode...');
-            extractedData = await this.extractWithGemini(pdfText, company.name, company.ticker, year, quarter);
-          }
-        } else {
-          console.log('[PDF Extraction] Extracting via Gemini 2.0 Flash text mode...');
-          extractedData = await this.extractWithGemini(pdfText, company.name, company.ticker, year, quarter);
+        if (!groqApiKey || groqApiKey === 'your-groq-api-key' || groqApiKey.trim() === '') {
+          throw new Error('GROQ_API_KEY tidak ditemukan di file .env Anda. Pastikan API Key Groq sudah terpasang.');
         }
-        console.log('[PDF Extraction] Fast text extraction complete & successful!');
+
+        console.log('[PDF Extraction] Extracting via Groq API...');
+        extractedData = await this.extractWithGroq(pdfText, company.name, company.ticker, year, quarter, groqApiKey);
+        console.log('[PDF Extraction] Groq extraction complete & successful!');
       } catch (textErr: any) {
-        console.warn(`[PDF Extraction] Text extraction failed: ${textErr.message || textErr}. Attempting Native PDF Upload fallback...`);
-        extractedData = await this.extractWithGeminiNativePDF(
-          file.buffer,
-          company.name,
-          company.ticker,
-          year,
-          quarter,
-        );
+        console.error(`[PDF Extraction] Groq extraction failed: ${textErr.message || textErr}`);
+        throw textErr;
       }
 
       // 6. Update report as extracted
@@ -214,127 +193,6 @@ export class ReportsService {
     };
   }
 
-  private async extractWithGemini(
-    pdfText: string,
-    companyName: string,
-    ticker: string,
-    year: number,
-    quarter: number,
-  ) {
-    const model = this.gemini.getGenerativeModel({ model: 'gemini-2.0-flash' });
-
-    const prompt = `
-Kamu adalah ahli analisis laporan keuangan Indonesia. Ekstrak data keuangan dari laporan tahunan perusahaan berikut.
-
-Perusahaan: ${companyName} (${ticker})
-Tahun: ${year}
-Kuartal: Q${quarter}
-
-Teks laporan keuangan:
----
-${pdfText}
----
-
-PENTING: Ekstrak data keuangan dalam format JSON berikut. SEMUA NILAI KEUANGAN WAJIB DALAM SATUAN JUTAAN RUPIAH (nilai riil dibagi 1.000.000).
-
-PERHATIKAN SATUAN PELAPORAN PADA HEADER/JUDUL:
-1. Jika laporan tertulis "disajikan dalam MILIAR RUPIAH" / "in BILLIONS of Rupiah":
-   - Contoh: Total Ekuitas tertulis 13.052 (miliar), maka Anda WAJIB mengalikan 1.000 menjadi 13052000 (Jutaan Rupiah).
-   - Contoh: Total Aset tertulis 19.570 (miliar), maka Anda WAJIB mengalikan 1.000 menjadi 19570000 (Jutaan Rupiah).
-2. Jika laporan tertulis "disajikan dalam JUTAAN RUPIAH" / "in MILLIONS of Rupiah":
-   - Tulis angka apa adanya (contoh: 13052000).
-3. Jika laporan tertulis "disajikan dalam RIBUAN RUPIAH" / "in THOUSANDS of Rupiah":
-   - Bagi angka dengan 1.000.
-4. PASTIKAN SKALA ASET, LIABILITAS, EKUITAS, DAN LABA BERSIH SANGAT KONSISTEN! Ekuitas perusahaan publik tidak boleh lebih kecil dari Laba Bersih tahunan jika perusahaan laba (ROE normal).
-
-KHUSUS UNTUK Saham Beredar (sharesOutstanding): Nilainya WAJIB ditulis dalam SATUAN LEMBAR UTUH (contoh: 4820000000 lembar, BUKAN 4820 atau disingkat juta/ribu lembar). Jika di laporan tertulis 4.820 juta lembar, Anda WAJIB mengalikannya dengan 1.000.000 menjadi 4820000000. Jika data tidak tersedia, gunakan null.
-
-Kembalikan HANYA JSON tanpa markdown:
-{
-  "companyId": null,
-  "year": ${year},
-  "quarter": ${quarter},
-  "totalAssets": null,
-  "currentAssets": null,
-  "nonCurrentAssets": null,
-  "totalLiabilities": null,
-  "currentLiabilities": null,
-  "longTermLiabilities": null,
-  "totalEquity": null,
-  "workingCapital": null,
-  "revenue": null,
-  "costOfGoodsSold": null,
-  "grossProfit": null,
-  "operatingExpenses": null,
-  "operatingProfit": null,
-  "ebitda": null,
-  "netProfit": null,
-  "operatingCashFlow": null,
-  "investingCashFlow": null,
-  "financingCashFlow": null,
-  "sharesOutstanding": null,
-  "eps": null,
-  "bvps": null,
-  "marketPrice": null,
-  "fairValue": null,
-  "currency": "IDR",
-  "unit": "jutaan",
-  "confidence": 0.0,
-  "notes": "catatan jika ada"
-}
-`;
-
-    const modelsToTry = ['gemini-2.0-flash'];
-    let result: any = null;
-    let lastErr: any = null;
-
-    for (const modelName of modelsToTry) {
-      try {
-        console.log(`[PDF Extraction] Attempting text extraction with Gemini model: ${modelName}...`);
-        const model = this.gemini.getGenerativeModel({ model: modelName });
-
-        let retries = 3;
-        while (retries > 0) {
-          try {
-            result = await model.generateContent(prompt);
-            break; // success
-          } catch (err: any) {
-            retries--;
-            const isRateLimit = err.message?.includes('429') || err.message?.includes('quota');
-            if (isRateLimit && retries > 0) {
-              let waitMs = 20000;
-              const match = err.message?.match(/retry in ([0-9.]+)s/i) || err.message?.match(/retryDelay":\s*"([0-9.]+)s"/i);
-              if (match && match[1]) {
-                waitMs = Math.ceil(parseFloat(match[1]) * 1000) + 2000;
-              }
-              console.warn(`[PDF Extraction] Gemini text mode (${modelName}) rate limited (429). Waiting ${waitMs / 1000}s automatically in background...`);
-              await new Promise((resolve) => setTimeout(resolve, waitMs));
-            } else {
-              throw err;
-            }
-          }
-        }
-
-        if (result) {
-          console.log(`[PDF Extraction] Text extraction succeeded with model: ${modelName}`);
-          break;
-        }
-      } catch (mErr: any) {
-        lastErr = mErr;
-        console.warn(`Model ${modelName} failed or rate limited: ${mErr.message}. Trying fallback model...`);
-      }
-    }
-
-    if (!result) throw lastErr || new Error('Semua model Gemini sedang mencapai kuota rate limit. Silakan coba 15 detik lagi.');
-
-    const text = result.response.text();
-
-    // Clean and parse JSON
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('AI tidak berhasil mengekstrak data keuangan');
-
-    return JSON.parse(jsonMatch[0]);
-  }
 
   private async extractWithGroq(
     pdfText: string,
@@ -398,6 +256,7 @@ Kembalikan HANYA JSON:
   "bvps": null,
   "marketPrice": null,
   "fairValue": null,
+  "dividend": null,
   "currency": "IDR",
   "unit": "jutaan",
   "confidence": 0.0,
@@ -414,52 +273,68 @@ Kembalikan HANYA JSON:
     let lastError: Error | null = null;
     
     for (const modelName of models) {
-      try {
-        console.log(`[Groq Extraction] Attempting extraction with model: ${modelName}...`);
-        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${groqApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: modelName,
-            messages: [
-              {
-                role: 'user',
-                content: prompt,
-              },
-            ],
-            response_format: { type: 'json_object' },
-            temperature: 0.1,
-          }),
-        });
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          console.log(`[Groq Extraction] Attempting extraction with model: ${modelName}...`);
+          const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${groqApiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: modelName,
+              messages: [
+                {
+                  role: 'user',
+                  content: prompt,
+                },
+              ],
+              response_format: { type: 'json_object' },
+              temperature: 0.1,
+            }),
+          });
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Groq API Error: ${errorText}`);
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Groq API Error: ${errorText}`);
+          }
+
+          const result: any = await response.json();
+          const content = result.choices[0]?.message?.content;
+          if (!content) throw new Error('Groq tidak mengembalikan data');
+          
+          // Clean and parse JSON
+          const jsonMatch = content.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) throw new Error('AI (Groq) tidak berhasil mengekstrak data keuangan');
+
+          console.log(`[Groq Extraction] Successfully extracted data using model: ${modelName}!`);
+          return JSON.parse(jsonMatch[0]);
+        } catch (err: any) {
+          retries--;
+          const isRateLimit = err.message?.includes('429') || err.message?.toLowerCase().includes('rate limit') || err.message?.toLowerCase().includes('quota');
+          if (isRateLimit && retries > 0) {
+            let waitSeconds = 15;
+            const match = err.message?.match(/try again in ([0-9.]+)s/i) || err.message?.match(/please wait ([0-9.]+)s/i) || err.message?.match(/retry in ([0-9.]+)s/i);
+            if (match && match[1]) {
+              waitSeconds = Math.ceil(parseFloat(match[1])) + 2;
+            }
+            console.warn(`[Groq Extraction] Model ${modelName} rate limited (429). Waiting ${waitSeconds}s automatically in background...`);
+            await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
+          } else {
+            console.warn(`[Groq Extraction] Model ${modelName} failed: ${err.message || err}`);
+            lastError = err;
+            break; // Go to next model
+          }
         }
-
-        const result: any = await response.json();
-        const content = result.choices[0]?.message?.content;
-        if (!content) throw new Error('Groq tidak mengembalikan data');
-        
-        // Clean and parse JSON
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) throw new Error('AI (Groq) tidak berhasil mengekstrak data keuangan');
-
-        console.log(`[Groq Extraction] Successfully extracted data using model: ${modelName}!`);
-        return JSON.parse(jsonMatch[0]);
-      } catch (err: any) {
-        console.warn(`[Groq Extraction] Model ${modelName} failed: ${err.message || err}`);
-        lastError = err;
       }
     }
     
     throw lastError || new Error('All Groq models failed');
   }
 
-  async confirmExtraction(reportId: string, userId: string) {
+  async confirmExtraction(reportId: string, userId: string, customExtractedData?: any) {
     const { data: report } = await this.supabase
       .getClient()
       .from('pdf_reports')
@@ -475,7 +350,19 @@ Kembalikan HANYA JSON:
       throw new BadRequestException('Laporan belum selesai diekstrak');
     }
 
-    const extractedData = report.extracted_data;
+    let extractedData = report.extracted_data;
+    if (customExtractedData) {
+      extractedData = customExtractedData;
+      await this.supabase
+        .getClient()
+        .from('pdf_reports')
+        .update({
+          extracted_data: customExtractedData,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', reportId);
+    }
+
     if (!extractedData) throw new BadRequestException('Tidak ada data yang diekstrak');
 
     // Save to financial_data
@@ -539,6 +426,7 @@ Kembalikan HANYA JSON:
       market_price: marketPrice,
       fair_value: fairValue,
       market_cap: marketCap,
+      dividend: this.parseDecimal(extractedData.dividend),
       source_pdf_id: reportId,
     };
 
@@ -651,146 +539,4 @@ Kembalikan HANYA JSON:
     return data;
   }
 
-  private async extractWithGeminiNativePDF(
-    fileBuffer: Buffer,
-    companyName: string,
-    ticker: string,
-    year: number,
-    quarter: number,
-  ) {
-    const tempDir = path.join(process.cwd(), 'tmp');
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
-    const tempFilePath = path.join(tempDir, `report_${Date.now()}_${Math.random().toString(36).substring(7)}.pdf`);
-    fs.writeFileSync(tempFilePath, fileBuffer);
-
-    let uploadResult: any = null;
-    try {
-      console.log(`[PDF Extraction] Uploading entire PDF to Gemini File API for full 350+ page native scanning...`);
-      uploadResult = await this.fileManager.uploadFile(tempFilePath, {
-        mimeType: 'application/pdf',
-        displayName: `${ticker}_${year}_Q${quarter}.pdf`,
-      });
-
-      console.log(`[PDF Extraction] Native PDF upload complete: ${uploadResult.file.uri}. Extracting with Gemini 2.0 Flash...`);
-
-      const model = this.gemini.getGenerativeModel({ model: 'gemini-2.0-flash' });
-
-      const prompt = `
-Kamu adalah ahli analisis laporan keuangan Indonesia. Ekstrak data keuangan dari SELURUH DOKUMEN PDF laporan keuangan berikut secara LENGKAP, AKURAT, dan PRESISI dari halaman berapa pun (termasuk halaman 1 hingga halaman 350+).
-
-Perusahaan: ${companyName} (${ticker})
-Tahun: ${year}
-Kuartal: Q${quarter}
-
-PENTING ATURAN SATUAN PELAPORAN:
-1. SEMUA NILAI KEUANGAN WAJIB DALAM SATUAN JUTAAN RUPIAH (nilai riil dibagi 1.000.000).
-2. PERHATIKAN JUDUL/HEADER PELAPORAN DENGAN SANGAT TELITI:
-   - Jika tertulis "disajikan dalam MILIAR RUPIAH" / "in BILLIONS of Rupiah" (contoh: Total Ekuitas 13.052), Anda WAJIB mengalikan 1.000 terlebih dahulu menjadi 13052000 (Jutaan Rupiah).
-   - Jika tertulis "disajikan dalam JUTAAN RUPIAH" / "in MILLIONS of Rupiah", tulis angka apa adanya.
-   - Jika tertulis "disajikan dalam RIBUAN RUPIAH" / "in THOUSANDS of Rupiah", bagi angka dengan 1.000.
-3. KHUSUS UNTUK Saham Beredar (sharesOutstanding): WAJIB DALAM SATUAN LEMBAR UTUH (contoh: 4820000000 lembar utuh, BUKAN 4820 atau disingkat juta/ribu lembar). Jika tertulis 4.820 juta lembar, kalikan 1.000.000 menjadi 4820000000.
-4. PERIKSA SELURUH HALAMAN (termasuk Catatan atas Laporan Keuangan di halaman berapa pun). Jika ada Informasi Saham / Harga Penutupan Saham (marketPrice), masukkan angkanya. Jika tidak ada, gunakan null.
-
-Kembalikan HANYA JSON tanpa markdown:
-{
-  "companyId": null,
-  "year": ${year},
-  "quarter": ${quarter},
-  "totalAssets": null,
-  "currentAssets": null,
-  "nonCurrentAssets": null,
-  "totalLiabilities": null,
-  "currentLiabilities": null,
-  "longTermLiabilities": null,
-  "totalEquity": null,
-  "workingCapital": null,
-  "revenue": null,
-  "costOfGoodsSold": null,
-  "grossProfit": null,
-  "operatingExpenses": null,
-  "operatingProfit": null,
-  "ebitda": null,
-  "netProfit": null,
-  "operatingCashFlow": null,
-  "investingCashFlow": null,
-  "financingCashFlow": null,
-  "sharesOutstanding": null,
-  "eps": null,
-  "bvps": null,
-  "marketPrice": null,
-  "fairValue": null,
-  "currency": "IDR",
-  "unit": "jutaan",
-  "confidence": 0.0,
-  "notes": "catatan jika ada"
-}
-`;
-
-      const modelsToTry = ['gemini-2.0-flash'];
-      let result: any = null;
-      let lastErr: any = null;
-
-      for (const modelName of modelsToTry) {
-        try {
-          console.log(`[PDF Extraction] Attempting native PDF extraction with model: ${modelName}...`);
-          const model = this.gemini.getGenerativeModel({ model: modelName });
-
-          let retries = 3;
-          while (retries > 0) {
-            try {
-              result = await model.generateContent([
-                {
-                  fileData: {
-                    mimeType: uploadResult.file.mimeType,
-                    fileUri: uploadResult.file.uri,
-                  },
-                },
-                { text: prompt },
-              ]);
-              break; // Success!
-            } catch (err: any) {
-              retries--;
-              const isRateLimit = err.message?.includes('429') || err.message?.includes('quota');
-              if (isRateLimit && retries > 0) {
-                let waitMs = 20000;
-                const match = err.message?.match(/retry in ([0-9.]+)s/i) || err.message?.match(/retryDelay":\s*"([0-9.]+)s"/i);
-                if (match && match[1]) {
-                  waitMs = Math.ceil(parseFloat(match[1]) * 1000) + 2000;
-                }
-                console.warn(`[PDF Extraction] Gemini (${modelName}) rate limited (429). Waiting ${waitMs / 1000}s automatically in background...`);
-                await new Promise((resolve) => setTimeout(resolve, waitMs));
-              } else {
-                throw err;
-              }
-            }
-          }
-
-          if (result) {
-            console.log(`[PDF Extraction] Native PDF extraction succeeded with model: ${modelName}`);
-            break;
-          }
-        } catch (mErr: any) {
-          lastErr = mErr;
-          console.warn(`Model ${modelName} failed or rate limited: ${mErr.message}. Trying fallback model...`);
-        }
-      }
-
-      if (!result) throw lastErr || new Error('Semua model Gemini sedang mencapai kuota rate limit. Silakan coba 15 detik lagi.');
-
-      const text = result.response.text();
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('AI tidak berhasil mengekstrak data keuangan dari PDF');
-
-      return JSON.parse(jsonMatch[0]);
-    } finally {
-      if (fs.existsSync(tempFilePath)) {
-        try { fs.unlinkSync(tempFilePath); } catch (e) {}
-      }
-      if (uploadResult && uploadResult.file?.name) {
-        try { await this.fileManager.deleteFile(uploadResult.file.name); } catch (e) {}
-      }
-    }
-  }
 }
