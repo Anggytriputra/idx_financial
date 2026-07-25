@@ -94,7 +94,8 @@ export class ReportsService {
             textLower.includes('total liabilitas') ||
             textLower.includes('total liabilities') ||
             textLower.includes('total ekuitas') ||
-            textLower.includes('total equity');
+            textLower.includes('total equity') ||
+            textLower.includes('balance sheet');
             
           const isLabaRugi = 
             textLower.includes('laba bersih') || 
@@ -103,22 +104,37 @@ export class ReportsService {
             textLower.includes('laba rugi') ||
             textLower.includes('laba usaha') ||
             textLower.includes('laba kotor') ||
-            textLower.includes('laba bruto');
+            textLower.includes('laba bruto') ||
+            textLower.includes('income statement') ||
+            textLower.includes('statement of profit');
 
           const isArusKas =
             textLower.includes('arus kas') ||
             textLower.includes('cash flow') ||
+            textLower.includes('cash flows') ||
             textLower.includes('aktivitas operasi') ||
-            textLower.includes('operating activities');
+            textLower.includes('operating activities') ||
+            textLower.includes('aktivitas investasi') ||
+            textLower.includes('investing activities') ||
+            textLower.includes('aktivitas pendanaan') ||
+            textLower.includes('financing activities') ||
+            textLower.includes('kas bersih') ||
+            textLower.includes('kas dan setara kas');
 
           const isSaham = 
             textLower.includes('saham beredar') ||
             textLower.includes('outstanding shares') ||
+            textLower.includes('jumlah saham') ||
             textLower.includes('harga saham') ||
             textLower.includes('share price') ||
             textLower.includes('kapitalisasi pasar') ||
             textLower.includes('market capitalization') ||
-            textLower.includes('harga penutupan');
+            textLower.includes('harga penutupan') ||
+            textLower.includes('closing price') ||
+            textLower.includes('laba per saham') ||
+            textLower.includes('earnings per share') ||
+            textLower.includes('dividen') ||
+            textLower.includes('dividend');
             
           if (isNeraca) neracaPages.push(page);
           if (isLabaRugi) labaRugiPages.push(page);
@@ -127,11 +143,11 @@ export class ReportsService {
         }
 
         const selectedPages: any[] = [];
-        selectedPages.push(...pages.slice(0, 3));
-        selectedPages.push(...neracaPages.slice(0, 3));
-        selectedPages.push(...labaRugiPages.slice(0, 3));
-        selectedPages.push(...arusKasPages.slice(0, 3));
-        selectedPages.push(...sahamPages.slice(0, 3));
+        selectedPages.push(...pages.slice(0, 4));
+        selectedPages.push(...neracaPages.slice(0, 4));
+        selectedPages.push(...labaRugiPages.slice(0, 4));
+        selectedPages.push(...arusKasPages.slice(0, 5));
+        selectedPages.push(...sahamPages.slice(0, 4));
 
         const uniqueSelected = Array.from(
           new Map(selectedPages.map(p => [p.num, p])).values()
@@ -140,7 +156,7 @@ export class ReportsService {
         pdfText = uniqueSelected.map(p => `--- HALAMAN ${p.num} ---\n${p.text}\n\n`).join('');
 
         if (pdfText.trim() === '') {
-          pdfText = pdfData.text.slice(0, 40000);
+          pdfText = pdfData.text.slice(0, 50000);
         }
 
         const groqApiKey = this.config.get<string>('GROQ_API_KEY');
@@ -227,19 +243,25 @@ Teks laporan keuangan:
 ${pdfText}
 ---
 
-PENTING: Ekstrak data keuangan dalam format JSON berikut. SEMUA NILAI KEUANGAN WAJIB DALAM SATUAN JUTAAN RUPIAH (nilai riil dibagi 1.000.000).
+PENTING: Ekstrak data keuangan dalam format JSON berikut. SEMUA NILAI KEUANGAN (Aset, Liabilitas, Ekuitas, Pendapatan, Laba, Arus Kas) WAJIB DALAM SATUAN JUTAAN RUPIAH (nilai riil dibagi 1.000.000).
 
-PERHATIKAN SATUAN PELAPORAN PADA HEADER/JUDUL:
+PERHATIKAN SATUAN PELAPORAN PADA HEADER/JUDUL LAPORAN:
 1. Jika laporan tertulis "disajikan dalam MILIAR RUPIAH" / "in BILLIONS of Rupiah":
-   - Contoh: Total Ekuitas tertulis 13.052 (miliar), maka Anda WAJIB mengalikan 1.000 menjadi 13052000 (Jutaan Rupiah).
-   - Contoh: Total Aset tertulis 19.570 (miliar), maka Anda WAJIB mengalikan 1.000 menjadi 19570000 (Jutaan Rupiah).
+   - Contoh: Total Ekuitas 13.052 (miliar) -> tulis 13052000 (Jutaan Rupiah).
+   - Contoh: Total Aset 19.570 (miliar) -> tulis 19570000 (Jutaan Rupiah).
 2. Jika laporan tertulis "disajikan dalam JUTAAN RUPIAH" / "in MILLIONS of Rupiah":
-   - Tulis angka apa adanya (contoh: 13052000).
+   - Tulis angka apa adanya.
 3. Jika laporan tertulis "disajikan dalam RIBUAN RUPIAH" / "in THOUSANDS of Rupiah":
    - Bagi angka dengan 1.000.
-4. PASTIKAN SKALA ASET, LIABILITAS, EKUITAS, DAN LABA BERSIH SANGAT KONSISTEN! Ekuitas perusahaan publik tidak boleh lebih kecil dari Laba Bersih tahunan jika perusahaan laba (ROE normal).
 
-KHUSUS UNTUK Saham Beredar (sharesOutstanding): Nilainya WAJIB ditulis dalam SATUAN LEMBAR UTUH (contoh: 4820000000 lembar, BUKAN 4820 atau disingkat juta/ribu lembar). Jika di laporan tertulis 4.820 juta lembar, Anda WAJIB mengalikannya dengan 1.000.000 menjadi 4820000000. Jika data tidak tersedia, gunakan null.
+PETUNJUK SPESIFIK TIAP FIELD:
+- Arus Kas (operatingCashFlow, investingCashFlow, financingCashFlow):
+  - Ekstrak Arus Kas Bersih dari Aktivitas Operasi (operatingCashFlow), Aktivitas Investasi (investingCashFlow), dan Aktivitas Pendanaan (financingCashFlow) pada Laporan Arus Kas.
+  - Wajib disajikan dalam SATUAN JUTAAN RUPIAH. Jika angka bernilai negatif atau dalam kurung (misal: (2.450.000)), beri tanda minus (contoh: -2450000).
+- Saham Beredar (sharesOutstanding):
+  - Wajib ditulis dalam SATUAN LEMBAR UTUH (contoh: 4820000000 lembar, BUKAN 4820 atau disingkat juta/ribu lembar). Jika tertulis 4.820 juta lembar, kalikan 1.000.000 menjadi 4820000000.
+- Harga Pasar Saham (marketPrice) & Dividen per Saham (dividend):
+  - Jika laporan mencantumkan Harga Pasar Saham / Harga Penutupan (closing price) atau Dividen per Saham (DPS / dividen kas), masukkan angkanya (dalam Rupiah utuh). Jika tidak dicantumkan, berikan null.
 
 Kembalikan HANYA JSON:
 {
@@ -273,12 +295,15 @@ Kembalikan HANYA JSON:
   "currency": "IDR",
   "unit": "jutaan",
   "confidence": 0.0,
-  "notes": "catatan jika ada"
+  "notes": "catatan ekstraksi"
 }
 `;
 
     const models = [
-      'llama-3.3-70b-versatile'
+      'llama-3.3-70b-versatile',
+      'llama3-70b-8192',
+      'mixtral-8x7b-32768',
+      'gemma2-9b-it'
     ];
     
     let lastError: Error | null = null;
@@ -355,12 +380,6 @@ Kembalikan HANYA JSON:
   ) {
     const { GoogleGenerativeAI } = require('@google/generative-ai');
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-flash-latest',
-      generationConfig: {
-        responseMimeType: 'application/json',
-      },
-    });
 
     const prompt = `
 Kamu adalah ahli analisis laporan keuangan Indonesia. Ekstrak data keuangan dari laporan tahunan perusahaan berikut.
@@ -374,19 +393,25 @@ Teks laporan keuangan:
 ${pdfText}
 ---
 
-PENTING: Ekstrak data keuangan dalam format JSON berikut. SEMUA NILAI KEUANGAN WAJIB DALAM SATUAN JUTAAN RUPIAH (nilai riil dibagi 1.000.000).
+PENTING: Ekstrak data keuangan dalam format JSON berikut. SEMUA NILAI KEUANGAN (Aset, Liabilitas, Ekuitas, Pendapatan, Laba, Arus Kas) WAJIB DALAM SATUAN JUTAAN RUPIAH (nilai riil dibagi 1.000.000).
 
-PERHATIKAN SATUAN PELAPORAN PADA HEADER/JUDUL:
+PERHATIKAN SATUAN PELAPORAN PADA HEADER/JUDUL LAPORAN:
 1. Jika laporan tertulis "disajikan dalam MILIAR RUPIAH" / "in BILLIONS of Rupiah":
-   - Contoh: Total Ekuitas tertulis 13.052 (miliar), maka Anda WAJIB mengalikan 1.000 menjadi 13052000 (Jutaan Rupiah).
-   - Contoh: Total Aset tertulis 19.570 (miliar), maka Anda WAJIB mengalikan 1.000 menjadi 19570000 (Jutaan Rupiah).
+   - Contoh: Total Ekuitas 13.052 (miliar) -> tulis 13052000 (Jutaan Rupiah).
+   - Contoh: Total Aset 19.570 (miliar) -> tulis 19570000 (Jutaan Rupiah).
 2. Jika laporan tertulis "disajikan dalam JUTAAN RUPIAH" / "in MILLIONS of Rupiah":
-   - Tulis angka apa adanya (contoh: 13052000).
+   - Tulis angka apa adanya.
 3. Jika laporan tertulis "disajikan dalam RIBUAN RUPIAH" / "in THOUSANDS of Rupiah":
    - Bagi angka dengan 1.000.
-4. PASTIKAN SKALA ASET, LIABILITAS, EKUITAS, DAN LABA BERSIH SANGAT KONSISTEN! Ekuitas perusahaan publik tidak boleh lebih kecil dari Laba Bersih tahunan jika perusahaan laba (ROE normal).
 
-KHUSUS UNTUK Saham Beredar (sharesOutstanding): Nilainya WAJIB ditulis dalam SATUAN LEMBAR UTUH (contoh: 4820000000 lembar, BUKAN 4820 atau disingkat juta/ribu lembar). Jika di laporan tertulis 4.820 juta lembar, Anda WAJIB mengalikannya dengan 1.000.000 menjadi 4820000000. Jika data tidak tersedia, gunakan null.
+PETUNJUK SPESIFIK TIAP FIELD:
+- Arus Kas (operatingCashFlow, investingCashFlow, financingCashFlow):
+  - Ekstrak Arus Kas Bersih dari Aktivitas Operasi (operatingCashFlow), Aktivitas Investasi (investingCashFlow), dan Aktivitas Pendanaan (financingCashFlow) pada Laporan Arus Kas.
+  - Wajib disajikan dalam SATUAN JUTAAN RUPIAH. Jika angka bernilai negatif atau dalam kurung (misal: (2.450.000)), beri tanda minus (contoh: -2450000).
+- Saham Beredar (sharesOutstanding):
+  - Wajib ditulis dalam SATUAN LEMBAR UTUH (contoh: 4820000000 lembar, BUKAN 4820 atau disingkat juta/ribu lembar). Jika tertulis 4.820 juta lembar, kalikan 1.000.000 menjadi 4820000000.
+- Harga Pasar Saham (marketPrice) & Dividen per Saham (dividend):
+  - Jika laporan mencantumkan Harga Pasar Saham / Harga Penutupan (closing price) atau Dividen per Saham (DPS / dividen kas), masukkan angkanya (dalam Rupiah utuh). Jika tidak dicantumkan, berikan null.
 
 Kembalikan HANYA JSON:
 {
@@ -420,40 +445,51 @@ Kembalikan HANYA JSON:
   "currency": "IDR",
   "unit": "jutaan",
   "confidence": 0.0,
-  "notes": "catatan jika ada"
+  "notes": "catatan ekstraksi"
 }
 `;
 
-    let retries = 3;
+    const geminiModels = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-flash-latest'];
     let lastError: Error | null = null;
 
-    while (retries > 0) {
-      try {
-        const result = await model.generateContent(prompt);
-        const responseText = result.response.text();
-        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) throw new Error('AI (Gemini) tidak berhasil mengekstrak data keuangan');
-        return JSON.parse(jsonMatch[0].trim());
-      } catch (err: any) {
-        retries--;
-        const isRateLimit = err.message?.includes('429') || err.message?.toLowerCase().includes('rate limit') || err.message?.toLowerCase().includes('quota') || err.message?.toLowerCase().includes('resource_exhausted');
-        if (isRateLimit && retries > 0) {
-          let waitSeconds = 10;
-          const match = err.message?.match(/retry in ([0-9.]+)s/i) || err.message?.match(/please retry in ([0-9.]+)s/i) || err.message?.match(/retryDelay\"?\s*:\s*\"?([0-9.]+)/i);
-          if (match && match[1]) {
-            waitSeconds = Math.ceil(parseFloat(match[1])) + 2;
+    for (const modelName of geminiModels) {
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          console.log(`[Gemini Extraction] Attempting model: ${modelName}...`);
+          const model = genAI.getGenerativeModel({
+            model: modelName,
+            generationConfig: {
+              responseMimeType: 'application/json',
+            },
+          });
+          const result = await model.generateContent(prompt);
+          const responseText = result.response.text();
+          const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) throw new Error(`AI (Gemini ${modelName}) tidak berhasil mengekstrak data JSON`);
+          console.log(`[Gemini Extraction] Successfully extracted using ${modelName}!`);
+          return JSON.parse(jsonMatch[0].trim());
+        } catch (err: any) {
+          retries--;
+          const isRateLimit = err.message?.includes('429') || err.message?.toLowerCase().includes('rate limit') || err.message?.toLowerCase().includes('quota') || err.message?.toLowerCase().includes('resource_exhausted');
+          if (isRateLimit && retries > 0) {
+            let waitSeconds = 10;
+            const match = err.message?.match(/retry in ([0-9.]+)s/i) || err.message?.match(/please retry in ([0-9.]+)s/i) || err.message?.match(/retryDelay\"?\s*:\s*\"?([0-9.]+)/i);
+            if (match && match[1]) {
+              waitSeconds = Math.ceil(parseFloat(match[1])) + 2;
+            }
+            console.warn(`[Gemini Extraction] Model ${modelName} rate limited. Waiting ${waitSeconds}s automatically...`);
+            await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
+          } else {
+            console.warn(`[Gemini Extraction] Model ${modelName} failed: ${err.message || err}`);
+            lastError = err;
+            break;
           }
-          console.warn(`[Gemini Extraction] Rate limited (429). Waiting ${waitSeconds}s automatically in background...`);
-          await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
-        } else {
-          console.warn(`[Gemini Extraction] Failed: ${err.message || err}`);
-          lastError = err;
-          break;
         }
       }
     }
 
-    throw lastError || new Error('Gemini extraction failed after retries');
+    throw lastError || new Error('Gemini extraction failed across all models');
   }
 
   async confirmExtraction(reportId: string, userId: string, customExtractedData?: any) {
