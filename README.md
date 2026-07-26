@@ -11,7 +11,7 @@ Upload PDF reports → AI extracts data automatically → View YOY charts, key f
 | Backend | NestJS + TypeScript |
 | Database | Supabase (PostgreSQL + Storage) |
 | Auth | Supabase Auth (JWT) |
-| AI | Groq API (Llama-3.3-70b & Llama-3.1-8b) |
+| AI | Groq API (Llama-3.3-70b) & Google Gemini API (Gemini 2.0 Flash fallback) |
 
 ## Quick Start
 
@@ -25,7 +25,7 @@ Upload PDF reports → AI extracts data automatically → View YOY charts, key f
 ```bash
 cd backend
 copy .env.example .env
-# Edit .env and fill in your Supabase credentials and Groq API Key
+# Edit .env and fill in your Supabase credentials, Groq API Key, and Gemini API Key
 npm run start:dev
 ```
 
@@ -51,6 +51,7 @@ npm run dev
 | `SUPABASE_ANON_KEY` | Anon/public key |
 | `SUPABASE_JWT_SECRET` | JWT secret from Supabase Dashboard > Settings > API |
 | `GROQ_API_KEY` | Groq API key from [Groq Console](https://console.groq.com/) |
+| `GEMINI_API_KEY` | Google Gemini API key from [Google AI Studio](https://aistudio.google.com/) (fallback AI model) |
 | `FRONTEND_URL` | Frontend URL (default: http://localhost:3000) |
 
 ### Frontend (`frontend/.env.local`)
@@ -65,7 +66,7 @@ npm run dev
 - 🔐 **Authentication** — Secure login and registration powered by Supabase Auth.
 - 🏢 **Watchlist Management** — Easily add or remove IDX tickers in your watchlist.
 - 📤 **Drag & Drop Upload** — Simple PDF financial statement uploader.
-- 🤖 **AI Extraction & Verification** — Groq API (Llama 3.3) extracts financial numbers automatically with an interactive, editable preview grid for direct verification before database insertion.
+- 🤖 **AI Extraction & Verification** — Groq API (Llama 3.3) & Google Gemini API (Gemini 2.0 Flash fallback) extract financial numbers automatically with an interactive, editable preview grid for direct verification before database insertion.
 - 📊 **YOY Trend Charts** — Visual representation of Balance Sheet, Income Statement, and Cash Flow metrics.
 - 🔢 **Financial Ratios** — Automatically calculates key metrics including GPM, OPM, NPM, ROA, ROE, DER, PBV, PER, and TATO.
 - 💰 **Valuation & Dividens** — Calculates Graham Number Fair Value vs Market Price, auto-computes BVPS, and logs historical Dividend Per Share (DPS).
