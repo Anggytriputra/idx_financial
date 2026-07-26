@@ -127,11 +127,18 @@ export default function UploadPage() {
       updated = true;
     }
 
-    if (nextData.eps && nextData.bvps && (extractedData.fairValue === null || extractedData.fairValue === undefined || extractedData.fairValue === "")) {
-      const epsVal = Number(nextData.eps);
-      const bvpsVal = Number(nextData.bvps);
-      if (epsVal > 0 && bvpsVal > 0) {
-        nextData.fairValue = parseFloat(Math.sqrt(22.5 * epsVal * bvpsVal).toFixed(2));
+    const epsVal = nextData.eps !== null && nextData.eps !== undefined ? Number(nextData.eps) : null;
+    const bvpsVal = nextData.bvps !== null && nextData.bvps !== undefined ? Number(nextData.bvps) : null;
+
+    if (epsVal !== null && bvpsVal !== null && epsVal > 0 && bvpsVal > 0) {
+      const calculatedFairValue = parseFloat(Math.sqrt(22.5 * epsVal * bvpsVal).toFixed(2));
+      if (nextData.fairValue !== calculatedFairValue) {
+        nextData.fairValue = calculatedFairValue;
+        updated = true;
+      }
+    } else if (epsVal !== null && epsVal <= 0) {
+      if (nextData.fairValue !== null && nextData.fairValue !== "") {
+        nextData.fairValue = null;
         updated = true;
       }
     }
@@ -139,7 +146,7 @@ export default function UploadPage() {
     if (updated) {
       setExtractedData(nextData);
     }
-  }, [extractedData?.totalEquity, extractedData?.netProfit, extractedData?.sharesOutstanding]);
+  }, [extractedData?.totalEquity, extractedData?.netProfit, extractedData?.sharesOutstanding, extractedData?.eps, extractedData?.bvps]);
 
   const handleConfirm = async () => {
     if (!reportId) return;
