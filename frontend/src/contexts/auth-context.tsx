@@ -27,6 +27,12 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+interface LoginResponse {
+  accessToken: string;
+  refreshToken: string;
+  user: User;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -44,7 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async (email: string, password: string) => {
-    const data = await api.post("/auth/login", { email, password });
+    const data = await api.post<LoginResponse>("/auth/login", { email, password });
     localStorage.setItem("access_token", data.accessToken);
     localStorage.setItem("refresh_token", data.refreshToken);
     localStorage.setItem("user", JSON.stringify(data.user));
@@ -58,7 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     password: string,
     fullName: string,
   ) => {
-    const data = await api.post("/auth/register", { email, password, fullName });
+    const data = await api.post<LoginResponse>("/auth/register", { email, password, fullName });
     localStorage.setItem("access_token", data.accessToken);
     localStorage.setItem("refresh_token", data.refreshToken);
     localStorage.setItem("user", JSON.stringify(data.user));

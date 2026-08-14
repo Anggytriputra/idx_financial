@@ -59,8 +59,12 @@ export class ReportsController {
 
   @Post(':id/confirm')
   @HttpCode(HttpStatus.OK)
-  confirm(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
-    return this.reportsService.confirmExtraction(id, req.user.id);
+  confirm(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req,
+    @Body() body: { extractedData?: any },
+  ) {
+    return this.reportsService.confirmExtraction(id, req.user.id, body?.extractedData);
   }
 
   @Get('company/:companyId')

@@ -98,11 +98,61 @@ export default function UploadPage() {
     }
   };
 
+  const handleFieldChange = (field: keyof ExtractedData, value: string) => {
+    if (!extractedData) return;
+    setExtractedData({
+      ...extractedData,
+      [field]: value === "" ? null : value,
+    });
+  };
+
+  // Auto-calculate BVPS, EPS and Fair Value if dependencies are populated
+  useEffect(() => {
+    if (!extractedData) return;
+
+    const totalEquity = Number(extractedData.totalEquity);
+    const netProfit = Number(extractedData.netProfit);
+    const shares = Number(extractedData.sharesOutstanding);
+
+    let updated = false;
+    const nextData = { ...extractedData };
+
+    if (totalEquity && shares && (extractedData.bvps === null || extractedData.bvps === undefined || extractedData.bvps === "")) {
+      nextData.bvps = parseFloat(((totalEquity * 1000000) / shares).toFixed(4));
+      updated = true;
+    }
+
+    if (netProfit && shares && (extractedData.eps === null || extractedData.eps === undefined || extractedData.eps === "")) {
+      nextData.eps = parseFloat(((netProfit * 1000000) / shares).toFixed(4));
+      updated = true;
+    }
+
+    const epsVal = nextData.eps !== null && nextData.eps !== undefined ? Number(nextData.eps) : null;
+    const bvpsVal = nextData.bvps !== null && nextData.bvps !== undefined ? Number(nextData.bvps) : null;
+
+    if (epsVal !== null && bvpsVal !== null && epsVal > 0 && bvpsVal > 0) {
+      const calculatedFairValue = parseFloat(Math.sqrt(22.5 * epsVal * bvpsVal).toFixed(2));
+      if (nextData.fairValue !== calculatedFairValue) {
+        nextData.fairValue = calculatedFairValue;
+        updated = true;
+      }
+    } else if (epsVal !== null && epsVal <= 0) {
+      if (nextData.fairValue !== null && nextData.fairValue !== "") {
+        nextData.fairValue = null;
+        updated = true;
+      }
+    }
+
+    if (updated) {
+      setExtractedData(nextData);
+    }
+  }, [extractedData?.totalEquity, extractedData?.netProfit, extractedData?.sharesOutstanding, extractedData?.eps, extractedData?.bvps]);
+
   const handleConfirm = async () => {
     if (!reportId) return;
     setUploadStatus("confirming");
     try {
-      await api.post(`/reports/${reportId}/confirm`, {});
+      await api.post(`/reports/${reportId}/confirm`, { extractedData });
       setUploadStatus("done");
       toast.success("Data berhasil disimpan! Chart akan terupdate.");
 
@@ -345,30 +395,103 @@ export default function UploadPage() {
             </div>
           </div>
 
-          {/* Data preview table */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {[
-              { label: "Total Aset", value: extractedData.totalAssets },
-              { label: "Total Liabilitas", value: extractedData.totalLiabilities },
-              { label: "Total Ekuitas", value: extractedData.totalEquity },
-              { label: "Pendapatan Bersih", value: extractedData.revenue },
-              { label: "Laba Bruto", value: extractedData.grossProfit },
-              { label: "Laba Operasional", value: extractedData.operatingProfit },
-              { label: "Laba Bersih", value: extractedData.netProfit },
-            ].map((item) => (
-              <div key={item.label} className="flex items-center justify-between py-2.5 px-3 rounded-lg bg-secondary/40">
-                <span className="text-sm text-muted-foreground">{item.label}</span>
-                <span className={`text-sm font-semibold ${
-                  item.value !== null && item.value !== undefined
-                    ? (item.value as number) < 0 ? "value-negative" : "text-foreground"
-                    : "text-muted-foreground"
-                }`}>
-                  {item.value !== null && item.value !== undefined
-                    ? `${(item.value as number).toLocaleString("id-ID")} ${extractedData.unit || "juta"}`
-                    : "—"}
-                </span>
+          {/* Data preview sections */}
+          <div className="space-y-6">
+            {/* Neraca */}
+            <div className="space-y-2">
+              <h3 className="text-xs font-semibold text-primary uppercase tracking-wider border-b border-border/30 pb-1">Neraca (Balance Sheet)</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {[
+                  { label: "Total Aset", field: "totalAssets", value: extractedData.totalAssets, unit: extractedData.unit || "juta" },
+                  { label: "Aset Lancar", field: "currentAssets", value: extractedData.currentAssets, unit: extractedData.unit || "juta" },
+                  { label: "Aset Tidak Lancar", field: "nonCurrentAssets", value: extractedData.nonCurrentAssets, unit: extractedData.unit || "juta" },
+                  { label: "Total Liabilitas", field: "totalLiabilities", value: extractedData.totalLiabilities, unit: extractedData.unit || "juta" },
+                  { label: "Liabilitas Jangka Pendek", field: "currentLiabilities", value: extractedData.currentLiabilities, unit: extractedData.unit || "juta" },
+                  { label: "Liabilitas Jangka Panjang", field: "longTermLiabilities", value: extractedData.longTermLiabilities, unit: extractedData.unit || "juta" },
+                  { label: "Total Ekuitas", field: "totalEquity", value: extractedData.totalEquity, unit: extractedData.unit || "juta" },
+                  { label: "Modal Kerja (Working Capital)", field: "workingCapital", value: extractedData.workingCapital, unit: extractedData.unit || "juta" },
+                ].map((item) => (
+                  <div key={item.label} className="flex items-center justify-between py-1.5 px-3 rounded-lg bg-secondary/20 border border-border/20">
+                    <span className="text-xs text-muted-foreground font-medium mr-2">{item.label}</span>
+                    <div className="flex items-center gap-1.5 max-w-[60%]">
+                      <input
+                        type="text"
+                        value={item.value !== null && item.value !== undefined ? String(item.value) : ""}
+                        onChange={(e) => handleFieldChange(item.field as keyof ExtractedData, e.target.value)}
+                        className="w-32 px-2 py-1 text-right text-xs font-semibold bg-background/40 border border-border/60 rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary transition-all"
+                      />
+                      <span className="text-[10px] text-muted-foreground font-medium min-w-[35px]">
+                        {item.unit}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
+            </div>
+
+            {/* Laba Rugi */}
+            <div className="space-y-2">
+              <h3 className="text-xs font-semibold text-primary uppercase tracking-wider border-b border-border/30 pb-1">Laba Rugi (Income Statement)</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {[
+                  { label: "Pendapatan / Penjualan", field: "revenue", value: extractedData.revenue, unit: extractedData.unit || "juta" },
+                  { label: "Beban Pokok Penjualan (COGS)", field: "costOfGoodsSold", value: extractedData.costOfGoodsSold, unit: extractedData.unit || "juta" },
+                  { label: "Laba Kotor (Gross Profit)", field: "grossProfit", value: extractedData.grossProfit, unit: extractedData.unit || "juta" },
+                  { label: "Beban Usaha (Operating Expenses)", field: "operatingExpenses", value: extractedData.operatingExpenses, unit: extractedData.unit || "juta" },
+                  { label: "Laba Operasional", field: "operatingProfit", value: extractedData.operatingProfit, unit: extractedData.unit || "juta" },
+                  { label: "EBITDA", field: "ebitda", value: extractedData.ebitda, unit: extractedData.unit || "juta" },
+                  { label: "Laba Bersih", field: "netProfit", value: extractedData.netProfit, unit: extractedData.unit || "juta" },
+                ].map((item) => (
+                  <div key={item.label} className="flex items-center justify-between py-1.5 px-3 rounded-lg bg-secondary/20 border border-border/20">
+                    <span className="text-xs text-muted-foreground font-medium mr-2">{item.label}</span>
+                    <div className="flex items-center gap-1.5 max-w-[60%]">
+                      <input
+                        type="text"
+                        value={item.value !== null && item.value !== undefined ? String(item.value) : ""}
+                        onChange={(e) => handleFieldChange(item.field as keyof ExtractedData, e.target.value)}
+                        className="w-32 px-2 py-1 text-right text-xs font-semibold bg-background/40 border border-border/60 rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary transition-all"
+                      />
+                      <span className="text-[10px] text-muted-foreground font-medium min-w-[35px]">
+                        {item.unit}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Arus Kas & Saham */}
+            <div className="space-y-2">
+              <h3 className="text-xs font-semibold text-primary uppercase tracking-wider border-b border-border/30 pb-1">Arus Kas & Informasi Saham</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {[
+                  { label: "Arus Kas Operasi", field: "operatingCashFlow", value: extractedData.operatingCashFlow, unit: extractedData.unit || "juta" },
+                  { label: "Arus Kas Investasi", field: "investingCashFlow", value: extractedData.investingCashFlow, unit: extractedData.unit || "juta" },
+                  { label: "Arus Kas Pendanaan", field: "financingCashFlow", value: extractedData.financingCashFlow, unit: extractedData.unit || "juta" },
+                  { label: "Jumlah Saham Beredar", field: "sharesOutstanding", value: extractedData.sharesOutstanding, unit: "lembar" },
+                  { label: "Laba per Saham (EPS)", field: "eps", value: extractedData.eps, unit: "Rp" },
+                  { label: "Nilai Buku per Saham (BVPS)", field: "bvps", value: extractedData.bvps, unit: "Rp" },
+                  { label: "Harga Pasar Saham", field: "marketPrice", value: extractedData.marketPrice, unit: "Rp" },
+                  { label: "Harga Wajar Graham", field: "fairValue", value: extractedData.fairValue, unit: "Rp" },
+                  { label: "Dividen per Saham (DPS)", field: "dividend", value: extractedData.dividend, unit: "Rp" },
+                ].map((item) => (
+                  <div key={item.label} className="flex items-center justify-between py-1.5 px-3 rounded-lg bg-secondary/20 border border-border/20">
+                    <span className="text-xs text-muted-foreground font-medium mr-2">{item.label}</span>
+                    <div className="flex items-center gap-1.5 max-w-[60%]">
+                      <input
+                        type="text"
+                        value={item.value !== null && item.value !== undefined ? String(item.value) : ""}
+                        onChange={(e) => handleFieldChange(item.field as keyof ExtractedData, e.target.value)}
+                        className="w-32 px-2 py-1 text-right text-xs font-semibold bg-background/40 border border-border/60 rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary transition-all"
+                      />
+                      <span className="text-[10px] text-muted-foreground font-medium min-w-[35px]">
+                        {item.unit}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
 
           {extractedData.notes && (

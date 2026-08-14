@@ -15,7 +15,7 @@ import { formatCurrency } from "@/lib/utils-financial";
 
 interface DataPoint {
   year: number;
-  [key: string]: number | null | undefined;
+  [key: string]: any;
 }
 
 interface Series {

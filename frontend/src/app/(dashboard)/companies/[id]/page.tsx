@@ -59,7 +59,7 @@ export default function CompanyDetailPage() {
     }
   };
 
-  const chartData = financials.map((f) => ({ year: f.year, ...f }));
+  const chartData = financials.map((f) => ({ ...f }));
   const ratioChartData = (key: keyof FinancialRatios) =>
     ratios.map((r) => ({ year: r.year, value: r[key] as number | null }));
 
@@ -322,7 +322,7 @@ function FinancialDataTable({
   financials: FinancialData[];
   type: "balance" | "income" | "cashflow" | "valuation";
 }) {
-  const rows: { label: string; key: keyof FinancialData }[] = {
+  const rows = {
     balance: [
       { label: "Total Aset", key: "total_assets" },
       { label: "Aset Lancar", key: "current_assets" },
@@ -353,16 +353,17 @@ function FinancialDataTable({
       { label: "BVPS (Rp)", key: "bvps" },
       { label: "Harga Pasar (Rp)", key: "market_price" },
       { label: "Harga Wajar (Rp)", key: "fair_value" },
+      { label: "Dividen per Saham (Rp)", key: "dividend" },
       { label: "Market Cap", key: "market_cap" },
     ],
-  }[type];
+  }[type] as { label: string; key: keyof FinancialData }[];
 
   const years = financials.map((f) => f.year);
 
   const formatValue = (key: keyof FinancialData, val: number | null | undefined) => {
     if (val === null || val === undefined) return "—";
     if (key === "shares_outstanding") return formatNumber(val);
-    if (["eps", "bvps", "market_price", "fair_value"].includes(key)) return formatPrice(val);
+    if (["eps", "bvps", "market_price", "fair_value", "dividend"].includes(key)) return formatPrice(val);
     return formatCurrency(val);
   };
 

@@ -1,31 +1,31 @@
 # IDX Financial Analyzer
 
-Aplikasi web untuk menganalisis laporan keuangan perusahaan publik Bursa Efek Indonesia (BEI).
-Upload PDF laporan keuangan → AI ekstrak data otomatis → Chart & rasio keuangan YOY.
+A web application designed to analyze public company financial statements from the Indonesia Stock Exchange (IDX / Bursa Efek Indonesia).
+Upload PDF reports → AI extracts data automatically → View YOY charts, key financial ratios, and valuation analysis.
 
 ## Tech Stack
 
-| Layer | Teknologi |
+| Layer | Technology |
 |-------|-----------|
 | Frontend | Next.js 16 + Tailwind CSS + Recharts |
 | Backend | NestJS + TypeScript |
 | Database | Supabase (PostgreSQL + Storage) |
 | Auth | Supabase Auth (JWT) |
-| AI | Google Gemini 1.5 Flash |
+| AI | Groq API (Llama-3.3-70b) & Google Gemini API (Gemini 2.0 Flash fallback) |
 
 ## Quick Start
 
 ### 1. Setup Supabase
-1. Buat project di [supabase.com](https://supabase.com)
-2. Jalankan SQL di `supabase/schema.sql` via Supabase SQL Editor
-3. Buat Storage Bucket bernama `pdf-reports` (private)
-4. Catat: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`
+1. Create a project at [supabase.com](https://supabase.com)
+2. Run the SQL schema in `supabase/schema.sql` via the Supabase SQL Editor
+3. Create a Storage Bucket named `pdf-reports` (Private)
+4. Retrieve and note down your credentials: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_JWT_SECRET`
 
 ### 2. Setup Backend
 ```bash
 cd backend
 copy .env.example .env
-# Edit .env dengan credentials Supabase dan Gemini API Key
+# Edit .env and fill in your Supabase credentials, Groq API Key, and Gemini API Key
 npm run start:dev
 ```
 
@@ -33,44 +33,45 @@ npm run start:dev
 ```bash
 cd frontend
 copy .env.local.example .env.local
-# Edit .env.local dengan NEXT_PUBLIC_SUPABASE_URL dan NEXT_PUBLIC_SUPABASE_ANON_KEY
+# Edit .env.local and fill in your NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY
 npm run dev
 ```
 
-### 4. Akses Aplikasi
+### 4. Access the Application
 - **Frontend**: http://localhost:3000
 - **Backend API**: http://localhost:3001/api
 
 ## Environment Variables
 
 ### Backend (`backend/.env`)
-| Variable | Keterangan |
+| Variable | Description |
 |----------|-----------|
-| `SUPABASE_URL` | URL project Supabase |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service role key (admin) |
+| `SUPABASE_URL` | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service role key (admin access) |
 | `SUPABASE_ANON_KEY` | Anon/public key |
-| `SUPABASE_JWT_SECRET` | JWT secret dari Supabase Dashboard > Settings > API |
-| `GEMINI_API_KEY` | Google Gemini API key dari [Google AI Studio](https://aistudio.google.com/) |
-| `FRONTEND_URL` | URL frontend (default: http://localhost:3000) |
+| `SUPABASE_JWT_SECRET` | JWT secret from Supabase Dashboard > Settings > API |
+| `GROQ_API_KEY` | Groq API key from [Groq Console](https://console.groq.com/) |
+| `GEMINI_API_KEY` | Google Gemini API key from [Google AI Studio](https://aistudio.google.com/) (fallback AI model) |
+| `FRONTEND_URL` | Frontend URL (default: http://localhost:3000) |
 
 ### Frontend (`frontend/.env.local`)
-| Variable | Keterangan |
+| Variable | Description |
 |----------|-----------|
-| `NEXT_PUBLIC_API_URL` | URL backend API (default: http://localhost:3001/api) |
-| `NEXT_PUBLIC_SUPABASE_URL` | URL project Supabase |
+| `NEXT_PUBLIC_API_URL` | Backend API URL (default: http://localhost:3001/api) |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Anon/public key |
 
-## Fitur Utama
+## Key Features
 
-- 🔐 **Login & Register** — autentikasi via Supabase
-- 🏢 **Manajemen Perusahaan** — tambah/hapus saham BEI ke watchlist
-- 📤 **Upload PDF** — drag & drop laporan keuangan tahunan
-- 🤖 **AI Extraction** — Google Gemini membaca & ekstrak data keuangan dari PDF
-- 📊 **Chart YOY** — grafik tren Balance Sheet, Laba Rugi, Arus Kas
-- 🔢 **Rasio Keuangan Otomatis** — GPM, OPM, NPM, ROA, ROE, DER, PBV, PER, TATO
-- 💰 **Valuasi** — perbandingan Harga Wajar vs Harga Pasar
+- 🔐 **Authentication** — Secure login and registration powered by Supabase Auth.
+- 🏢 **Watchlist Management** — Easily add or remove IDX tickers in your watchlist.
+- 📤 **Drag & Drop Upload** — Simple PDF financial statement uploader.
+- 🤖 **AI Extraction & Verification** — Groq API (Llama 3.3) & Google Gemini API (Gemini 2.0 Flash fallback) extract financial numbers automatically with an interactive, editable preview grid for direct verification before database insertion.
+- 📊 **YOY Trend Charts** — Visual representation of Balance Sheet, Income Statement, and Cash Flow metrics.
+- 🔢 **Financial Ratios** — Automatically calculates key metrics including GPM, OPM, NPM, ROA, ROE, DER, PBV, PER, and TATO.
+- 💰 **Valuation & Dividens** — Calculates Graham Number Fair Value vs Market Price, auto-computes BVPS, and logs historical Dividend Per Share (DPS).
 
-## Struktur Proyek
+## Project Structure
 ```
 idx_financial/
 ├── backend/          # NestJS API
@@ -83,8 +84,8 @@ idx_financial/
 ├── frontend/         # Next.js App
 │   └── src/
 │       ├── app/
-│       │   ├── (auth)/       # login, register
-│       │   └── (dashboard)/  # dashboard, companies, upload
+│       │   ├── (auth)/       # Login, Register
+│       │   └── (dashboard)/  # Dashboard, Companies, Upload
 │       ├── components/
 │       │   ├── charts/
 │       │   └── layout/

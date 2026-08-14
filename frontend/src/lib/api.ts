@@ -87,6 +87,7 @@ export interface FinancialData {
   market_price?: number;
   fair_value?: number;
   market_cap?: number;
+  dividend?: number;
   source_pdf_id?: string;
   notes?: string;
   created_at: string;
