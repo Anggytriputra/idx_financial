@@ -6,8 +6,8 @@ import {
   IsNumber,
   IsString,
   IsUUID,
-} from 'class-validator';
-import { Type } from 'class-transformer';
+} from "class-validator";
+import { Type } from "class-transformer";
 
 export class CreateFinancialDto {
   @IsUUID()
@@ -34,7 +34,6 @@ export class CreateFinancialDto {
   @IsOptional() @IsNumber() @Type(() => Number) totalEquity?: number;
   @IsOptional() @IsNumber() @Type(() => Number) workingCapital?: number;
 
-  // Income Statement
   @IsOptional() @IsNumber() @Type(() => Number) revenue?: number;
   @IsOptional() @IsNumber() @Type(() => Number) costOfGoodsSold?: number;
   @IsOptional() @IsNumber() @Type(() => Number) grossProfit?: number;
