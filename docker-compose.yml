@@ -13,7 +13,21 @@ services:
     ports:
       - "5432:5432"
 
-  # 2. Mesin Frontend (Next.js) Anda
+  # 2. Mesin Backend (NestJS)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: idx-backend
+    ports:
+      - "3001:3001"
+    environment:
+      # Beri tahu backend agar konek ke host "db" (nama service database di atas)
+      DATABASE_URL: "postgresql://postgres:rahasia_password@db:5432/idx_financial_db"
+    depends_on:
+      - db
+
+  # 3. Mesin Frontend (Next.js)
   frontend:
     build: 
       context: ./frontend
@@ -22,4 +36,4 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - db # Memastikan database menyala duluan sebelum frontend menyala
+      - backend # Frontend menunggu backend menyala dulu
