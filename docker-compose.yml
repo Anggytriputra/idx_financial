@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  # 1. Mesin Database PostgreSQL
+  db:
+    image: postgres:15-alpine
+    container_name: idx-database
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: rahasia_password
+      POSTGRES_DB: idx_financial_db
+    ports:
+      - "5432:5432"
+
+  # 2. Mesin Frontend (Next.js) Anda
+  frontend:
+    build: 
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: idx-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db # Memastikan database menyala duluan sebelum frontend menyala
