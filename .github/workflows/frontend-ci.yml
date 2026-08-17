@@ -1,0 +1,36 @@
+name: Frontend CI (Satpam Pengecek Kode)
+
+# Kapan robot ini bekerja? 
+# Jawab: Setiap kali Anda melakukan 'git push' ke branch 'master'
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build-and-test:
+    name: Mengecek Frontend
+    # Robot ini akan meminjam server Linux (Ubuntu) gratis dari GitHub
+    runs-on: ubuntu-latest
+
+    steps:
+      # Langkah 1: Robot mendownload kode Anda dari repository ini
+      - name: Checkout Kode
+        uses: actions/checkout@v4
+
+      # Langkah 2: Robot menginstall Node.js di server pinjamannya
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22' # Sesuai dengan yang kita pakai di Docker tadi
+
+      # Langkah 3: Robot masuk ke folder frontend dan menginstall NPM
+      - name: Install Dependencies (NPM)
+        working-directory: ./frontend
+        run: npm install
+
+      # Langkah 4: Robot mencoba melakukan build. 
+      # Jika build ini error, GitHub akan memberikan tanda silang merah (❌)
+      - name: Test Build Frontend
+        working-directory: ./frontend
+        run: npm run build
