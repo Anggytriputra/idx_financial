@@ -1,0 +1,29 @@
+name: Backend CI (Satpam Pengecek Kode BE)
+
+# Bekerja setiap ada 'git push' ke branch 'master'
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build-and-test:
+    name: Mengecek Backend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Kode
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22' # Sesuai dengan versi NestJS/Docker kita
+
+      - name: Install Dependencies (NPM)
+        working-directory: ./backend
+        run: npm install
+
+      - name: Test Build Backend
+        working-directory: ./backend
+        run: npm run build
