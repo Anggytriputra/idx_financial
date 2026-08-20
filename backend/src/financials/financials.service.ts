@@ -150,7 +150,6 @@ export class FinancialsService {
   }
 
   async findByCompany(companyId: string, userId: string) {
-    // Verify ownership
     const { data: company } = await this.supabase
       .getClient()
       .from('companies')
