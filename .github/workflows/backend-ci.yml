@@ -2,7 +2,7 @@ name: Backend CI (Satpam Pengecek Kode BE)
 
 # Bekerja setiap ada 'git push' ke branch 'master'
 on:
-  push:
+  pull_request:
     branches:
       - master
 

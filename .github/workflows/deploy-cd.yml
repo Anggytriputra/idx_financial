@@ -1,0 +1,26 @@
+name: Deploy CD (Robot Pekerja AWS)
+
+# Robot ini hanya bekerja jika ada kode yang masuk ke branch 'master'
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    name: Deploy ke AWS EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Eksekusi Perintah di AWS via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.AWS_HOST }}
+          username: ${{ secrets.AWS_USERNAME }}
+          key: ${{ secrets.AWS_SSH_KEY }}
+          # Ini adalah perintah yang akan diketikkan robot di terminal hijau AWS Anda
+          script: |
+            cd ~/idx_financial
+            git pull origin master
+            sudo docker compose up -d --build
+            sudo docker exec idx-backend npx prisma db push
