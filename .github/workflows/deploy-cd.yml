@@ -23,4 +23,3 @@ jobs:
             cd ~/idx_financial
             git pull origin master
             sudo docker compose up -d --build
-            sudo docker exec idx-backend npx prisma db push
