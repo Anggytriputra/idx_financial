@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # 1. Mesin Database PostgreSQL
+  # 1. Database PostgreSQL
   db:
     image: postgres:15-alpine
     container_name: idx-database
@@ -13,7 +13,7 @@ services:
     ports:
       - "5432:5432"
 
-  # 2. Mesin Backend (NestJS)
+  # 2. Backend (NestJS)
   backend:
     build:
       context: ./backend
@@ -22,14 +22,13 @@ services:
     ports:
       - "3001:3001"
     environment:
-      # Beri tahu backend agar konek ke host "db" (nama service database di atas)
       DATABASE_URL: "postgresql://postgres:${DB_PASSWORD}@db:5432/idx_financial_db"
     env_file:
       - .env
     depends_on:
       - db
 
-  # 3. Mesin Frontend (Next.js)
+  # 3. Frontend (Next.js)
   frontend:
     build: 
       context: ./frontend
