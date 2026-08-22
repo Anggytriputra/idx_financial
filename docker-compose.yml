@@ -8,7 +8,7 @@ services:
     restart: always
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: rahasia_password
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: idx_financial_db
     ports:
       - "5432:5432"
@@ -23,7 +23,9 @@ services:
       - "3001:3001"
     environment:
       # Beri tahu backend agar konek ke host "db" (nama service database di atas)
-      DATABASE_URL: "postgresql://postgres:rahasia_password@db:5432/idx_financial_db"
+      DATABASE_URL: "postgresql://postgres:${DB_PASSWORD}@db:5432/idx_financial_db"
+    env_file:
+      - .env
     depends_on:
       - db
 
