@@ -10,7 +10,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   private jwkCache: Map<string, crypto.KeyObject> = new Map();
   private jwksUrl: string;
 
-  constructor(private config: ConfigService) {
+  constructor(private config: ConfigServices) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
